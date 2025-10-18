@@ -38,15 +38,104 @@ class CameraWindow(QtWidgets.QMainWindow):
     def __init__(self, debug_mode=False):
         super().__init__()
         self.setWindowTitle("Aruco + OCR Camera")
-        self.resize(1000, 700)
+        self.resize(1200, 800)
 
         # ウィンドウアイコンを設定
         icon_path = os.path.join(os.path.dirname(__file__), 'icon.png')
         if os.path.exists(icon_path):
             self.setWindowIcon(QtGui.QIcon(icon_path))
 
+        # モダンなデザインのスタイルシートを適用
+        self.setStyleSheet("""
+            QMainWindow {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1a1a2e, stop:1 #16213e);
+            }
+            QLabel#videoLabel {
+                background-color: #0f3460;
+                border-radius: 12px;
+                border: 2px solid #533483;
+                padding: 8px;
+            }
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #533483, stop:1 #3d2564);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 12px 24px;
+                font-size: 14px;
+                font-weight: normal;
+                min-width: 100px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #6b4397, stop:1 #533483);
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3d2564, stop:1 #2d1a4c);
+                padding-top: 14px;
+            }
+            QPushButton#settingsButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #e94560, stop:1 #c42847);
+            }
+            QPushButton#settingsButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #ff5577, stop:1 #e94560);
+            }
+            QPushButton#quitButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #757575, stop:1 #5a5a5a);
+            }
+            QPushButton#quitButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #8a8a8a, stop:1 #707070);
+            }
+            QPushButton#wbToggleOn {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4CAF50, stop:1 #388E3C);
+            }
+            QPushButton#wbToggleOn:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #66BB6A, stop:1 #4CAF50);
+            }
+            QPushButton#wbToggleOff {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #757575, stop:1 #5a5a5a);
+            }
+            QPushButton#wbToggleOff:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #8a8a8a, stop:1 #707070);
+            }
+            QPushButton#resumeButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2196F3, stop:1 #1976D2);
+            }
+            QPushButton#resumeButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #42A5F5, stop:1 #2196F3);
+            }
+            QTextEdit {
+                background-color: #16213e;
+                color: #e0e0e0;
+                border: 2px solid #533483;
+                border-radius: 8px;
+                padding: 12px;
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 13px;
+                selection-background-color: #533483;
+            }
+            QTextEdit:focus {
+                border: 2px solid #6b4397;
+            }
+        """)
+
         # デバッグモード
-        self.debug_mode = debug_mode        # captures directory
+        self.debug_mode = debug_mode
+
+        # captures directory
         self.captures_dir = os.path.join(os.path.dirname(__file__), 'captures')
         os.makedirs(self.captures_dir, exist_ok=True)
 
@@ -100,11 +189,14 @@ class CameraWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.video_label)
 
         controls = QtWidgets.QHBoxLayout()
+        controls.setSpacing(12)
         layout.addLayout(controls)
 
         # 教科設定ボタン
-        self.settings_btn = QtWidgets.QPushButton("教科設定")
+        self.settings_btn = QtWidgets.QPushButton("⚙️ 教科設定")
+        self.settings_btn.setObjectName("settingsButton")
         self.settings_btn.clicked.connect(self.open_subject_settings)
+        self.settings_btn.setCursor(QtCore.Qt.PointingHandCursor)
         controls.addWidget(self.settings_btn)
 
         # ホワイトバランス補正トグルボタン
@@ -112,20 +204,7 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.wb_toggle_btn.setCheckable(True)
         self.wb_toggle_btn.setChecked(True)
         self.wb_toggle_btn.clicked.connect(self.toggle_white_balance)
-        self.wb_toggle_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                font-weight: bold;
-                padding: 5px 10px;
-            }
-            QPushButton:checked {
-                background-color: #4CAF50;
-            }
-            QPushButton:!checked {
-                background-color: #757575;
-            }
-        """)
+        self.wb_toggle_btn.setCursor(QtCore.Qt.PointingHandCursor)
         controls.addWidget(self.wb_toggle_btn)
 
         # ArUco 検出をトリガーに自動撮影するための単発タイマー
@@ -144,19 +223,24 @@ class CameraWindow(QtWidgets.QMainWindow):
             40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
         controls.addItem(spacer)
 
-        self.quit_btn = QtWidgets.QPushButton("終了")
-        self.quit_btn.clicked.connect(self.close)
-        controls.addWidget(self.quit_btn)
-
         # 撮影後に一時停止したライブフィードを再開するボタン
-        self.resume_btn = QtWidgets.QPushButton("撮影再開")
+        self.resume_btn = QtWidgets.QPushButton("📷 撮影再開")
+        self.resume_btn.setObjectName("resumeButton")
         self.resume_btn.clicked.connect(self.resume_camera)
+        self.resume_btn.setCursor(QtCore.Qt.PointingHandCursor)
         controls.addWidget(self.resume_btn)
+
+        self.quit_btn = QtWidgets.QPushButton("✕ 終了")
+        self.quit_btn.setObjectName("quitButton")
+        self.quit_btn.clicked.connect(self.close)
+        self.quit_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        controls.addWidget(self.quit_btn)
 
         # OCR の結果などを表示するテキスト領域
         self.ocr_output = QtWidgets.QTextEdit()
         self.ocr_output.setReadOnly(True)
-        self.ocr_output.setMaximumHeight(120)
+        self.ocr_output.setMaximumHeight(150)
+        self.ocr_output.setPlaceholderText("OCR結果がここに表示されます...")
         layout.addWidget(self.ocr_output)
 
         # カメラからフレームを定期的に取得して表示するためのタイマー
@@ -208,10 +292,14 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.white_balance_enabled = self.wb_toggle_btn.isChecked()
         if self.white_balance_enabled:
             self.wb_toggle_btn.setText("✓ 補正ON")
+            self.wb_toggle_btn.setObjectName("wbToggleOn")
             toast = ToastNotification("ホワイトバランス補正: ON", self, duration=2000)
         else:
             self.wb_toggle_btn.setText("補正OFF")
+            self.wb_toggle_btn.setObjectName("wbToggleOff")
             toast = ToastNotification("ホワイトバランス補正: OFF", self, duration=2000)
+        # スタイルを再適用
+        self.wb_toggle_btn.setStyle(self.wb_toggle_btn.style())
         toast.show()
 
     def update_frame(self):
