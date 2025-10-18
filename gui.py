@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 
 # Ensure Qt uses PySide6's plugins rather than OpenCV's bundled plugins which can cause
 # "Could not load the Qt platform plugin 'xcb'" errors. We set QT_PLUGIN_PATH to PySide6
@@ -23,6 +24,141 @@ import pytesseract
 from PIL import Image
 import numpy as np
 from datetime import datetime
+
+
+class ToastNotification(QtWidgets.QLabel):
+    """
+    自動的に消えるトースト通知ウィジェット
+    """
+    def __init__(self, message, parent=None, duration=2000):
+        super().__init__(message, parent)
+        self.setStyleSheet("""
+            QLabel {
+                background-color: rgba(50, 50, 50, 220);
+                color: white;
+                padding: 15px 20px;
+                border-radius: 8px;
+                font-size: 14px;
+            }
+        """)
+        self.setAlignment(QtCore.Qt.AlignCenter)
+        self.setWordWrap(True)
+        self.setMaximumWidth(400)
+
+        # 親ウィジェットの中央に配置
+        if parent:
+            self.setParent(parent)
+            self.adjustSize()
+            parent_rect = parent.rect()
+            x = (parent_rect.width() - self.width()) // 2
+            y = parent_rect.height() - self.height() - 50
+            self.move(x, y)
+
+        # 一定時間後に自動で消える
+        QtCore.QTimer.singleShot(duration, self.fade_out)
+
+    def fade_out(self):
+        """フェードアウトして削除"""
+        self.hide()
+        self.deleteLater()
+
+
+class SubjectSettingsDialog(QtWidgets.QDialog):
+    """
+    ArUcoマーカーIDと教科名を対応付けて管理するダイアログ。
+    テーブル形式でID-教科名のペアを表示・編集し、JSONファイルに保存する。
+    """
+    def __init__(self, current_mappings=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("教科設定")
+        self.resize(500, 400)
+
+        # current_mappings は {id: subject_name} の辞書
+        self.mappings = current_mappings.copy() if current_mappings else {}
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        # 説明ラベル
+        info_label = QtWidgets.QLabel(
+            "ArUcoマーカーIDと教科名を対応付けます。\n"
+            "追加・編集後、「保存」ボタンで設定を保存してください。"
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        # テーブルウィジェット
+        self.table = QtWidgets.QTableWidget()
+        self.table.setColumnCount(2)
+        self.table.setHorizontalHeaderLabels(["マーカーID", "教科名"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.table)
+
+        # テーブルにデータを読み込む
+        self.load_table_data()
+
+        # ボタン群
+        btn_layout = QtWidgets.QHBoxLayout()
+
+        add_btn = QtWidgets.QPushButton("行を追加")
+        add_btn.clicked.connect(self.add_row)
+        btn_layout.addWidget(add_btn)
+
+        remove_btn = QtWidgets.QPushButton("選択行を削除")
+        remove_btn.clicked.connect(self.remove_row)
+        btn_layout.addWidget(remove_btn)
+
+        btn_layout.addStretch()
+
+        save_btn = QtWidgets.QPushButton("保存")
+        save_btn.clicked.connect(self.save_and_accept)
+        btn_layout.addWidget(save_btn)
+
+        cancel_btn = QtWidgets.QPushButton("キャンセル")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+
+        layout.addLayout(btn_layout)
+
+    def load_table_data(self):
+        """現在のマッピングをテーブルに表示"""
+        self.table.setRowCount(0)
+        for marker_id, subject in sorted(self.mappings.items(), key=lambda x: int(x[0])):
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QtWidgets.QTableWidgetItem(str(marker_id)))
+            self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(subject))
+
+    def add_row(self):
+        """新しい行を追加"""
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        self.table.setItem(row, 0, QtWidgets.QTableWidgetItem(""))
+        self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(""))
+        self.table.setCurrentCell(row, 0)
+
+    def remove_row(self):
+        """選択された行を削除"""
+        current_row = self.table.currentRow()
+        if current_row >= 0:
+            self.table.removeRow(current_row)
+
+    def save_and_accept(self):
+        """テーブルの内容をマッピング辞書に保存してダイアログを閉じる"""
+        new_mappings = {}
+        for row in range(self.table.rowCount()):
+            id_item = self.table.item(row, 0)
+            subject_item = self.table.item(row, 1)
+            if id_item and subject_item:
+                marker_id = id_item.text().strip()
+                subject = subject_item.text().strip()
+                if marker_id and subject:
+                    new_mappings[marker_id] = subject
+        self.mappings = new_mappings
+        self.accept()
+
+    def get_mappings(self):
+        """現在のマッピングを取得"""
+        return self.mappings
 
 
 class OCRWorker(QtCore.QThread):
@@ -80,11 +216,27 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.captures_dir = os.path.join(os.path.dirname(__file__), 'captures')
         os.makedirs(self.captures_dir, exist_ok=True)
 
+        # subject mappings JSON file
+        self.settings_file = os.path.join(os.path.dirname(__file__), 'subject_mappings.json')
+        self.subject_mappings = self.load_subject_mappings()
+
         # Video capture
         self.cap = cv2.VideoCapture(0)
         if not self.cap.isOpened():
             QtWidgets.QMessageBox.critical(self, "Error", "Cannot open camera")
             sys.exit(1)
+
+        # カメラの画質を最大に設定
+        # 解像度を最大に設定（一般的なWebカメラは1920x1080または1280x720）
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+
+        # その他の画質パラメータを設定
+        # FOURCC コーデックを MJPEG に設定（高画質）
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+
+        # 可能な場合はフレームレートも設定（30fps）
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
 
         # ArUco setup
         self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
@@ -116,13 +268,10 @@ class CameraWindow(QtWidgets.QMainWindow):
         controls = QtWidgets.QHBoxLayout()
         layout.addLayout(controls)
 
-        # 撮影ボタン。Aruco が検出されていない場合は無効にする（後で update_frame で制御）
-        self.capture_btn = QtWidgets.QPushButton("Take Picture")
-        self.capture_btn.clicked.connect(self.take_picture)
-        controls.addWidget(self.capture_btn)
-
-        # 初期状態では撮影ボタンを無効化（Aruco 検出があって初めて撮れるようにする）
-        self.capture_btn.setEnabled(False)
+        # 教科設定ボタン
+        self.settings_btn = QtWidgets.QPushButton("教科設定")
+        self.settings_btn.clicked.connect(self.open_subject_settings)
+        controls.addWidget(self.settings_btn)
 
         # ArUco 検出をトリガーに自動撮影するための単発タイマー
         # マーカーを検出したらこのタイマーを start して一定時間（capture_delay_ms）後に撮影する
@@ -133,21 +282,16 @@ class CameraWindow(QtWidgets.QMainWindow):
         # 前フレームの検出状態を保持して、状態遷移でタイマーを開始/停止する
         self._last_aruco_detected = False
 
-        # 手動で OCR を実行するボタン（ライブ中のフレーム、または最後に保存した画像に対して実行）
-        self.ocr_btn = QtWidgets.QPushButton("Run OCR Now")
-        self.ocr_btn.clicked.connect(self.run_ocr)
-        controls.addWidget(self.ocr_btn)
-
         spacer = QtWidgets.QSpacerItem(
             40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
         controls.addItem(spacer)
 
-        self.quit_btn = QtWidgets.QPushButton("Quit")
+        self.quit_btn = QtWidgets.QPushButton("終了")
         self.quit_btn.clicked.connect(self.close)
         controls.addWidget(self.quit_btn)
 
         # 撮影後に一時停止したライブフィードを再開するボタン
-        self.resume_btn = QtWidgets.QPushButton("Resume Camera")
+        self.resume_btn = QtWidgets.QPushButton("撮影再開")
         self.resume_btn.clicked.connect(self.resume_camera)
         controls.addWidget(self.resume_btn)
 
@@ -167,6 +311,39 @@ class CameraWindow(QtWidgets.QMainWindow):
         # (the OCR button will still be available for manual runs)
 
         self.current_frame = None
+
+    def load_subject_mappings(self):
+        """JSONファイルから教科マッピングを読み込む"""
+        if os.path.exists(self.settings_file):
+            try:
+                with open(self.settings_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                QtWidgets.QMessageBox.warning(
+                    self, "警告", f"設定ファイルの読み込みに失敗しました: {e}")
+                return {}
+        return {}
+
+    def save_subject_mappings(self):
+        """教科マッピングをJSONファイルに保存"""
+        try:
+            with open(self.settings_file, 'w', encoding='utf-8') as f:
+                json.dump(self.subject_mappings, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self, "エラー", f"設定ファイルの保存に失敗しました: {e}")
+            return False
+
+    def open_subject_settings(self):
+        """教科設定ダイアログを開く"""
+        dialog = SubjectSettingsDialog(self.subject_mappings, self)
+        if dialog.exec() == QtWidgets.QDialog.Accepted:
+            self.subject_mappings = dialog.get_mappings()
+            if self.save_subject_mappings():
+                # トースト通知で保存完了を表示（2秒後に自動で消える）
+                toast = ToastNotification("教科設定を保存しました", self, duration=4000)
+                toast.show()
 
     def update_frame(self):
         ret, frame = self.cap.read()
@@ -233,19 +410,15 @@ class CameraWindow(QtWidgets.QMainWindow):
                 except Exception:
                     pass
 
-        # マーカーの検出状態に応じて撮影ボタンと自動撮影タイマーを制御する
-        # - マーカーが新たに検出されたら capture_btn を有効化し、単発タイマーで自動撮影を行う
-        # - マーカーが消えたら capture_btn は無効化し、保留中の自動撮影をキャンセルする
+        # マーカーの検出状態に応じて自動撮影タイマーを制御する
+        # - マーカーが新たに検出されたら 単発タイマーで自動撮影を行う
+        # - マーカーが消えたら 保留中の自動撮影をキャンセルする
         if aruco_detected and not self._last_aruco_detected and self.timer.isActive():
-            self.capture_btn.setEnabled(True)
             if not self.aruco_auto_timer.isActive():
                 self.aruco_auto_timer.start(self.capture_delay_ms)
         elif aruco_detected:
-            # 連続検出状態ではボタンは有効のままにする
-            self.capture_btn.setEnabled(True)
+            pass
         else:
-            # マーカーがない場合は撮影不可にして、もし自動タイマーが動いていれば止める
-            self.capture_btn.setEnabled(False)
             if self.aruco_auto_timer.isActive():
                 self.aruco_auto_timer.stop()
 
@@ -266,9 +439,34 @@ class CameraWindow(QtWidgets.QMainWindow):
     def take_picture(self):
         if self.current_frame is None:
             return
+
+        # 検出されたマーカーIDを取得
+        gray = cv2.cvtColor(self.current_frame, cv2.COLOR_BGR2GRAY)
+        corners, ids, _ = self.detector.detectMarkers(gray)
+
+        # マーカーが検出されていない場合
+        if ids is None or len(ids) == 0:
+            QtWidgets.QMessageBox.warning(
+                self, "警告", "ArUcoマーカーが検出されていません。")
+            return
+
+        # 最初に検出されたマーカーIDを使用
+        marker_id = str(ids[0][0])
+
+        # マーカーIDに対応する教科名を取得
+        subject_name = self.subject_mappings.get(marker_id, "未分類")
+
+        # 教科ごとのフォルダを作成
+        subject_dir = os.path.join(self.captures_dir, subject_name)
+        os.makedirs(subject_dir, exist_ok=True)
+
+        # ファイル名を生成して保存
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = os.path.join(self.captures_dir, f'capture_{ts}.png')
-        cv2.imwrite(filename, self.current_frame)
+        filename = os.path.join(subject_dir, f'capture_{ts}.png')
+
+        # 最高品質で保存（PNG形式、圧縮レベル0-9、0が最高品質）
+        cv2.imwrite(filename, self.current_frame, [cv2.IMWRITE_PNG_COMPRESSION, 0])
+
         # show the saved image in the video_label
         try:
             # load with QImage for display
@@ -289,11 +487,12 @@ class CameraWindow(QtWidgets.QMainWindow):
                              QtCore.Qt.KeepAspectRatio)
             self.video_label.setPixmap(pix)
 
-        QtWidgets.QMessageBox.information(
-            self, "Saved", f"Saved to {filename}")
+        # トースト通知で保存完了を表示（2秒後に自動で消える）
+        toast_msg = f"教科: {subject_name}\nマーカーID: {marker_id}\n保存完了"
+        toast = ToastNotification(toast_msg, self, duration=4000)
+        toast.show()
 
         # run OCR on the saved image (in background)
-        self.ocr_btn.setEnabled(False)
         worker = OCRWorker(frame=None, image_path=filename, parent=self)
         worker.finished.connect(self.on_ocr_result)
         worker.start()
@@ -306,7 +505,6 @@ class CameraWindow(QtWidgets.QMainWindow):
         # Run OCR on the currently displayed frame (prefers current_frame if camera is active)
         if self.current_frame is not None and self.timer.isActive():
             src_frame = self.current_frame.copy()
-            self.ocr_btn.setEnabled(False)
             worker = OCRWorker(frame=src_frame, parent=self)
             worker.finished.connect(self.on_ocr_result)
             worker.start()
@@ -321,7 +519,6 @@ class CameraWindow(QtWidgets.QMainWindow):
                 self, "OCR", "No captured image to run OCR on.")
             return
         latest = os.path.join(self.captures_dir, files[-1])
-        self.ocr_btn.setEnabled(False)
         worker = OCRWorker(image_path=latest, parent=self)
         worker.finished.connect(self.on_ocr_result)
         worker.start()
@@ -334,7 +531,6 @@ class CameraWindow(QtWidgets.QMainWindow):
     def on_ocr_result(self, text):
         self.ocr_output.append(
             f"[{datetime.now().strftime('%H:%M:%S')}] {text}")
-        self.ocr_btn.setEnabled(True)
 
     def closeEvent(self, event):
         self.timer.stop()
