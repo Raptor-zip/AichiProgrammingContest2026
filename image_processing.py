@@ -277,3 +277,160 @@ def draw_debug_grid(image, viz_info):
                (x, legend_y + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
     return debug_frame
+
+
+def perspective_transform_from_marker(image, corners, marker_size_mm=50, output_dpi=300):
+    """
+    ArUcoマーカーの四隅の座標を使って透視変換（台形補正）を行う
+
+    Args:
+        image: 入力画像（BGR形式）
+        corners: ArUcoマーカーの角の座標
+        marker_size_mm: マーカーの実際のサイズ（mm）、デフォルト50mm
+        output_dpi: 出力画像の解像度（DPI）、デフォルト300
+
+    Returns:
+        tuple: (変換後の画像, 変換行列, 出力サイズ(width, height))
+               マーカーが検出されない場合は (None, None, None)
+    """
+    if corners is None or len(corners) == 0:
+        return None, None, None
+
+    # 最初のマーカーの四隅の座標を取得
+    # ArUcoマーカーの角の順序: 左上、右上、右下、左下
+    src_points = corners[0].reshape(4, 2).astype(np.float32)
+
+    # マーカーの実サイズから出力画像のピクセルサイズを計算
+    # DPI (dots per inch) から mm あたりのピクセル数を計算
+    # 1 inch = 25.4 mm
+    pixels_per_mm = output_dpi / 25.4
+    marker_size_pixels = int(marker_size_mm * pixels_per_mm)
+
+    # 変換先の座標（正方形のマーカー）
+    # 左上、右上、右下、左下の順
+    dst_points = np.array([
+        [0, 0],
+        [marker_size_pixels, 0],
+        [marker_size_pixels, marker_size_pixels],
+        [0, marker_size_pixels]
+    ], dtype=np.float32)
+
+    # 透視変換行列を計算
+    matrix = cv2.getPerspectiveTransform(src_points, dst_points)
+
+    # 画像全体を変換するために、画像の四隅も変換してみる
+    h, w = image.shape[:2]
+    image_corners = np.array([
+        [0, 0],
+        [w, 0],
+        [w, h],
+        [0, h]
+    ], dtype=np.float32).reshape(-1, 1, 2)
+
+    # 画像の四隅を変換
+    transformed_corners = cv2.perspectiveTransform(image_corners, matrix)
+
+    # 変換後の画像サイズを計算（全ての変換後の点を含む最小矩形）
+    x_coords = transformed_corners[:, 0, 0]
+    y_coords = transformed_corners[:, 0, 1]
+
+    min_x = int(np.floor(np.min(x_coords)))
+    max_x = int(np.ceil(np.max(x_coords)))
+    min_y = int(np.floor(np.min(y_coords)))
+    max_y = int(np.ceil(np.max(y_coords)))
+
+    # 出力サイズ
+    output_width = max_x - min_x
+    output_height = max_y - min_y
+
+    # オフセット行列を作成（負の座標を補正）
+    offset_matrix = np.array([
+        [1, 0, -min_x],
+        [0, 1, -min_y],
+        [0, 0, 1]
+    ], dtype=np.float32)
+
+    # 最終的な変換行列 = オフセット行列 × 透視変換行列
+    final_matrix = offset_matrix @ matrix
+
+    # 透視変換を適用（背景を緑色に設定）
+    # BGR形式なので (0, 255, 0) = 緑色
+    transformed = cv2.warpPerspective(
+        image,
+        final_matrix,
+        (output_width, output_height),
+        flags=cv2.INTER_NEAREST,   # 補間を行わない
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 255, 0)  # 緑色の背景
+    )
+
+    return transformed, final_matrix, (output_width, output_height)
+
+
+def trim_green_background(image, threshold=250, margin=10):
+    """
+    画像から緑色の背景部分を除去してトリミングする。
+    上下左右それぞれで「緑色のピクセルが1つもない最初の行/列」を境界とする。
+
+    Args:
+        image: 入力画像（BGR形式）
+        threshold: 緑色判定の許容値（0～255）。デフォルト250（ほぼ完全な緑）。
+        margin: トリミング後に追加する余白のピクセル数。
+
+    Returns:
+        トリミングされた画像（または None）
+    """
+    if image is None:
+        return None
+
+    img_h, img_w = image.shape[:2]
+
+    # 緑色を検出（BGR形式）
+    green_lower = np.array([0, threshold, 0])
+    green_upper = np.array([5, 255, 5])  # 少し許容範囲を持たせる
+
+    # 緑色マスク（緑色→255, その他→0）
+    green_mask = cv2.inRange(image, green_lower, green_upper)
+
+    # --- 各方向から「緑が1つもない最初の行/列」を探索 ---
+
+    # 上から下
+    top = 0
+    for y in range(img_h):
+        if np.all(green_mask[y, :] == 0):  # 緑が1つもない行
+            top = y
+            break
+
+    # 下から上
+    bottom = img_h - 1
+    for y in range(img_h - 1, -1, -1):
+        if np.all(green_mask[y, :] == 0):
+            bottom = y
+            break
+
+    # 左から右
+    left = 0
+    for x in range(img_w):
+        if np.all(green_mask[:, x] == 0):
+            left = x
+            break
+
+    # 右から左
+    right = img_w - 1
+    for x in range(img_w - 1, -1, -1):
+        if np.all(green_mask[:, x] == 0):
+            right = x
+            break
+
+    # マージンを適用（画像範囲内に収める）
+    top = max(0, top - margin)
+    bottom = min(img_h - 1, bottom + margin)
+    left = max(0, left - margin)
+    right = min(img_w - 1, right + margin)
+
+    print(f"Trimming coordinates: top={top}, bottom={bottom}, left={left}, right={right}")
+
+    # トリミング（bottom, rightを含むため+1）
+    cropped = image[top:bottom+1, left:right+1]
+
+    return cropped

@@ -30,7 +30,9 @@ from image_processing import (
     auto_white_balance,
     calculate_marker_rotation,
     correct_rotation,
-    draw_debug_grid
+    draw_debug_grid,
+    perspective_transform_from_marker,
+    trim_green_background
 )
 
 
@@ -462,11 +464,108 @@ class CameraWindow(QtWidgets.QMainWindow):
         subject_dir = os.path.join(self.captures_dir, subject_name)
         os.makedirs(subject_dir, exist_ok=True)
 
-        # まず回転補正を実行
-        marker_angle = calculate_marker_rotation(corners)
-        rotated_frame, rotation_applied = correct_rotation(self.current_frame, marker_angle)
+        # タイムスタンプを生成（全てのファイルで共通）
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-        # 回転後の画像に対してホワイトバランス補正を適用
+        # ステップ0: 元の画像を保存（デバッグモード）
+        if self.debug_mode:
+            original_filename = os.path.join(subject_dir, f'capture_{ts}_0_original.jpg')
+            cv2.imwrite(original_filename, self.current_frame)
+
+        # ステップ1: 台形補正（透視変換）を適用
+        # マーカーの四隅の座標から画像全体を正面から見た状態に変換
+        perspective_frame, transform_matrix, output_size = perspective_transform_from_marker(
+            self.current_frame, corners, marker_size_mm=50, output_dpi=300
+        )
+
+        # 台形補正が成功した場合はその画像を使用、失敗した場合は元の画像を使用
+        if perspective_frame is not None:
+            processing_frame = perspective_frame
+            perspective_applied = True
+            # デバッグモード: 台形補正後の画像を保存
+            if self.debug_mode:
+                perspective_filename = os.path.join(subject_dir, f'capture_{ts}_1_perspective.jpg')
+                cv2.imwrite(perspective_filename, perspective_frame)
+        else:
+            processing_frame = self.current_frame.copy()
+            perspective_applied = False
+
+
+        # warpPerspective の後
+        mask = cv2.inRange(processing_frame, (0, 200, 0), (80, 255, 80))  # 緑検出マスク (白=緑、黒=非緑)
+
+        if self.debug_mode:
+            mask_filename = os.path.join(subject_dir, f'capture_{ts}_1_mask.jpg')
+            cv2.imwrite(mask_filename, mask)
+
+        # 上下左右1pxずつ削った画像を作る
+        mask_trimmed = mask[1:-1, 1:-1]
+
+        if self.debug_mode:
+            mask_trimmed_filename = os.path.join(subject_dir, f'capture_{ts}_1_mask_trimmed.jpg')
+            cv2.imwrite(mask_trimmed_filename, mask_trimmed)
+
+        # 非緑部分のマスク (白=非緑、黒=緑)
+        not_green = cv2.bitwise_not(mask_trimmed)
+
+        if self.debug_mode:
+            not_green_filename = os.path.join(subject_dir, f'capture_{ts}_1_not_green.jpg')
+            cv2.imwrite(not_green_filename, not_green)
+
+        # not_green: 白 = 非緑領域、黒 = 緑領域
+        # 白い部分（非緑=残したい部分）がある範囲を検出
+        ys, xs = np.where(not_green == 255)
+
+        if len(xs) > 0 and len(ys) > 0:
+            # 非緑部分を囲む矩形 (mask_trimmedの座標系)
+            top, bottom = np.min(ys), np.max(ys)
+            left, right = np.min(xs), np.max(xs)
+
+            # mask_trimmedは1px削った画像なので、元の座標に戻す (+1)
+            top += 1
+            bottom += 1
+            left += 1
+            right += 1
+
+            print(f"Cropping to non-green area: top={top}, bottom={bottom}, left={left}, right={right}")
+            print(f"もともとのサイズ: {processing_frame.shape[1]}x{processing_frame.shape[0]}")
+
+            # 非緑部分を含む範囲を切り取って残す
+            # 緑色の領域は除外され、黒や他の色はこの範囲に含まれる
+            cropped = processing_frame[top:bottom+1, left:right+1]
+        else:
+            # 非緑部分が見つからない場合は元の画像をそのまま使用
+            cropped = processing_frame
+
+        cv2.imwrite(os.path.join(subject_dir, f'capture_{ts}_cropped.jpg'), cropped)
+
+        # processing_frameを上下左右10pxずつ削った画像を作る
+        processing_frame_trimmed = processing_frame[10:-10, 10:-10]
+
+        # ステップ2: トリミング（緑色の背景を除去）
+        trimmed_frame = trim_green_background(processing_frame_trimmed, threshold=253, margin=0)
+        if self.debug_mode:
+            trimmed_filename = os.path.join(subject_dir, f'capture_{ts}_2_trimmed.jpg')
+            cv2.imwrite(trimmed_filename, trimmed_frame)
+
+        # ステップ3: 回転補正を実行（トリミング後の画像に対して）
+        # トリミング後の画像でマーカーを再検出
+        gray_trimmed = cv2.cvtColor(trimmed_frame, cv2.COLOR_BGR2GRAY)
+        corners_trimmed, ids_trimmed, _ = self.detector.detectMarkers(gray_trimmed)
+
+        if corners_trimmed is not None and len(corners_trimmed) > 0:
+            marker_angle = calculate_marker_rotation(corners_trimmed)
+            rotated_frame, rotation_applied = correct_rotation(trimmed_frame, marker_angle)
+        else:
+            # マーカーが検出できない場合は回転補正をスキップ
+            rotated_frame = trimmed_frame
+            rotation_applied = 0.0
+
+        if self.debug_mode:
+            rotated_filename = os.path.join(subject_dir, f'capture_{ts}_3_rotated.jpg')
+            cv2.imwrite(rotated_filename, rotated_frame)
+
+        # ステップ4: 回転後の画像に対してホワイトバランス補正を適用
         if self.white_balance_enabled:
             # 回転後の画像でマーカーを再検出
             gray_rotated = cv2.cvtColor(rotated_frame, cv2.COLOR_BGR2GRAY)
@@ -482,8 +581,11 @@ class CameraWindow(QtWidgets.QMainWindow):
             corrected_frame = rotated_frame
             viz_info, white_bgr, black_bgr = None, None, None
 
-        # ファイル名を生成して保存
-        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        if self.debug_mode:
+            wb_filename = os.path.join(subject_dir, f'capture_{ts}_4_white_balance.jpg')
+            cv2.imwrite(wb_filename, corrected_frame)
+
+        # ファイル名を生成して最終画像を保存
         filename = os.path.join(subject_dir, f'capture_{ts}.png')
 
         # 画像を保存
@@ -520,8 +622,9 @@ class CameraWindow(QtWidgets.QMainWindow):
             self.paused_display_frame = corrected_frame.copy()
 
         # トースト通知で保存完了を表示（2秒後に自動で消える）
+        perspective_info = "\n台形補正: 適用" if perspective_applied else ""
         rotation_info = f"\n回転補正: {rotation_applied:.1f}度" if abs(rotation_applied) >= 1.0 else ""
-        toast_msg = f"教科: {subject_name}\nマーカーID: {marker_id}{rotation_info}\n保存完了"
+        toast_msg = f"教科: {subject_name}\nマーカーID: {marker_id}{perspective_info}{rotation_info}\n保存完了"
         toast = ToastNotification(toast_msg, self, duration=4000)
         toast.show()
 
