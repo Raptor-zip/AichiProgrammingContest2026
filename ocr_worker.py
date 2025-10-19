@@ -41,9 +41,21 @@ class OCRWorker(QtCore.QThread):
             else:
                 raise ValueError("No image provided to OCRWorker")
 
-            # 日本語＋英語で OCR を試みる
-            text = pytesseract.image_to_string(pil_image, lang='jpn+eng')
-            text = text.strip()
+            # 日本語と英語で別々にOCRを実行して精度を向上
+            text_jpn = pytesseract.image_to_string(pil_image, lang='jpn')
+            text_eng = pytesseract.image_to_string(pil_image, lang='eng')
+
+            # 連続した空白と改行を削除してクリーンアップ
+            import re
+            text_jpn = re.sub(r'\s+', ' ', text_jpn.strip())
+            text_eng = re.sub(r'\s+', ' ', text_eng.strip())
+
+            # 両方の結果を結合
+            text = f"日本語:{text_jpn} 英語:{text_eng}".strip()
+
+            # 再度連続した空白を削除
+            text = re.sub(r'\s+', ' ', text)
+
             if not text:
                 text = "(no text detected)"
         except Exception as e:

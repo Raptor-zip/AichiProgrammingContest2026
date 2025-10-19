@@ -144,22 +144,29 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.subject_mappings = self.load_subject_mappings()
 
         # Video capture
-        self.cap = cv2.VideoCapture(0)
+        # self.cap = cv2.VideoCapture(0)
+        try:
+            self.cap = cv2.VideoCapture("http://192.168.110.102:8080/video")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Error", f"Cannot initialize camera stream: {e}")
+            sys.exit(1)
+
         if not self.cap.isOpened():
             QtWidgets.QMessageBox.critical(self, "Error", "Cannot open camera")
             sys.exit(1)
 
-        # カメラの画質を最大に設定
-        # 解像度を最大に設定（一般的なWebカメラは1920x1080または1280x720）
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        # Set buffer size to 1 to always get the latest frame and prevent latency buildup
+        # This is critical when stream FPS > processing FPS (e.g., 60fps stream with 33fps timer)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-        # その他の画質パラメータを設定
-        # FOURCC コーデックを MJPEG に設定（高画質）
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+        # self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        # self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        # self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 3840)
+        # self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 2160)
 
-        # 可能な場合はフレームレートも設定（30fps）
-        self.cap.set(cv2.CAP_PROP_FPS, 30)
+        # self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('H', '2', '6', '4'))
+
+        # self.cap.set(cv2.CAP_PROP_FPS, 30)
 
         # ArUco setup
         self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
@@ -254,6 +261,10 @@ class CameraWindow(QtWidgets.QMainWindow):
 
         self.current_frame = None
 
+        # Flag to pause camera feed display (but keep reading frames to maintain stream sync)
+        self.camera_paused = False
+        self.paused_display_frame = None
+
     def load_subject_mappings(self):
         """JSONファイルから教科マッピングを読み込む"""
         if os.path.exists(self.settings_file):
@@ -303,12 +314,45 @@ class CameraWindow(QtWidgets.QMainWindow):
         toast.show()
 
     def update_frame(self):
-        ret, frame = self.cap.read()
-        if not ret:
+        print("Updating frame...")
+
+        try:
+            ret, frame = self.cap.read()
+            if not ret:
+                return
+
+            # Grab extra frames to flush buffer if stream FPS > timer FPS
+            # This ensures we're always processing the most recent frame
+            # and prevents latency buildup
+            for _ in range(2):  # flush up to 2 old frames
+                ret_flush, _ = self.cap.read()
+                if not ret_flush:
+                    break
+
+        except Exception as e:
+            # FFmpeg/MJPEG stream errors (e.g., "Stream ends prematurely", "overread")
+            # These are often non-fatal, so we log and continue
+            print(f"Warning: Frame read error: {e}")
             return
+
+        print(f"Captured frame size: {frame.shape[1]}x{frame.shape[0]}")
 
         # keep original BGR for saving/ocr
         self.current_frame = frame.copy()
+
+        # If camera is paused, show the paused frame instead but keep reading to maintain stream sync
+        if self.camera_paused:
+            if self.paused_display_frame is not None:
+                # Display the paused frame
+                rgb = cv2.cvtColor(self.paused_display_frame, cv2.COLOR_BGR2RGB)
+                h, w, ch = rgb.shape
+                bytes_per_line = ch * w
+                qimg = QtGui.QImage(rgb.data, w, h, bytes_per_line,
+                                    QtGui.QImage.Format_RGB888)
+                pix = QtGui.QPixmap.fromImage(qimg)
+                pix = pix.scaled(self.video_label.size(), QtCore.Qt.KeepAspectRatio)
+                self.video_label.setPixmap(pix)
+            return
 
         # ArUco マーカー検出: グレースケールで検出を行い、検出があればマーカー候補をフィルタ
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -370,7 +414,8 @@ class CameraWindow(QtWidgets.QMainWindow):
         # マーカーの検出状態に応じて自動撮影タイマーを制御する
         # - マーカーが新たに検出されたら 単発タイマーで自動撮影を行う
         # - マーカーが消えたら 保留中の自動撮影をキャンセルする
-        if aruco_detected and not self._last_aruco_detected and self.timer.isActive():
+        # Note: only start auto-capture if camera is not paused
+        if aruco_detected and not self._last_aruco_detected and not self.camera_paused:
             if not self.aruco_auto_timer.isActive():
                 self.aruco_auto_timer.start(self.capture_delay_ms)
         elif aruco_detected:
@@ -459,6 +504,8 @@ class CameraWindow(QtWidgets.QMainWindow):
             pix = pix.scaled(self.video_label.size(),
                              QtCore.Qt.KeepAspectRatio)
             self.video_label.setPixmap(pix)
+            # Store the paused display frame
+            self.paused_display_frame = corrected_frame.copy()
         except Exception:
             rgb = cv2.cvtColor(corrected_frame, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb.shape
@@ -469,6 +516,8 @@ class CameraWindow(QtWidgets.QMainWindow):
             pix = pix.scaled(self.video_label.size(),
                              QtCore.Qt.KeepAspectRatio)
             self.video_label.setPixmap(pix)
+            # Store the paused display frame
+            self.paused_display_frame = corrected_frame.copy()
 
         # トースト通知で保存完了を表示（2秒後に自動で消える）
         rotation_info = f"\n回転補正: {rotation_applied:.1f}度" if abs(rotation_applied) >= 1.0 else ""
@@ -481,13 +530,13 @@ class CameraWindow(QtWidgets.QMainWindow):
         worker.finished.connect(self.on_ocr_result)
         worker.start()
 
-        # stop updating from camera until user resumes
-        if self.timer.isActive():
-            self.timer.stop()
+        # pause camera feed by setting a flag instead of stopping timer
+        # stopping/starting the timer causes MJPEG stream sync issues
+        self.camera_paused = True
 
     def run_ocr(self):
         # Run OCR on the currently displayed frame (prefers current_frame if camera is active)
-        if self.current_frame is not None and self.timer.isActive():
+        if self.current_frame is not None and not self.camera_paused:
             src_frame = self.current_frame.copy()
             worker = OCRWorker(frame=src_frame, parent=self)
             worker.finished.connect(self.on_ocr_result)
@@ -508,9 +557,9 @@ class CameraWindow(QtWidgets.QMainWindow):
         worker.start()
 
     def resume_camera(self):
-        # restart live feed
-        if not self.timer.isActive():
-            self.timer.start(30)
+        # resume live feed by clearing the paused flag
+        self.camera_paused = False
+        self.paused_display_frame = None
 
     def on_ocr_result(self, text):
         self.ocr_output.append(
