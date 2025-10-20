@@ -279,7 +279,7 @@ def draw_debug_grid(image, viz_info):
     return debug_frame
 
 
-def perspective_transform_from_marker(image, corners, marker_size_mm=50, output_dpi=300):
+def perspective_transform_from_marker(image, corners, marker_size_mm=50, output_dpi=300, draw_corners=False):
     """
     ArUcoマーカーの四隅の座標を使って透視変換（台形補正）を行う
 
@@ -288,13 +288,15 @@ def perspective_transform_from_marker(image, corners, marker_size_mm=50, output_
         corners: ArUcoマーカーの角の座標
         marker_size_mm: マーカーの実際のサイズ（mm）、デフォルト50mm
         output_dpi: 出力画像の解像度（DPI）、デフォルト300
+        draw_corners: True の場合、変換後に元画像の4隅にマーカーを描画
 
     Returns:
-        tuple: (変換後の画像, 変換行列, 出力サイズ(width, height))
-               マーカーが検出されない場合は (None, None, None)
+        tuple: (変換後の画像, 変換行列, 出力サイズ(width, height), 変換後の4隅座標)
+               変換後の4隅座標は [(x1,y1), (x2,y2), (x3,y3), (x4,y4)] の形式 (左上、右上、右下、左下)
+               マーカーが検出されない場合は (None, None, None, None)
     """
     if corners is None or len(corners) == 0:
-        return None, None, None
+        return None, None, None, None
 
     # 最初のマーカーの四隅の座標を取得
     # ArUcoマーカーの角の順序: 左上、右上、右下、左下
@@ -353,84 +355,36 @@ def perspective_transform_from_marker(image, corners, marker_size_mm=50, output_
     # 最終的な変換行列 = オフセット行列 × 透視変換行列
     final_matrix = offset_matrix @ matrix
 
-    # 透視変換を適用（背景を緑色に設定）
-    # BGR形式なので (0, 255, 0) = 緑色
+    # 透視変換を適用
     transformed = cv2.warpPerspective(
         image,
         final_matrix,
         (output_width, output_height),
         flags=cv2.INTER_NEAREST,   # 補間を行わない
         borderMode=cv2.BORDER_CONSTANT,
-        borderValue=(0, 255, 0)  # 緑色の背景
+        borderValue=(255, 255, 255)
     )
 
-    return transformed, final_matrix, (output_width, output_height)
+    # 元画像の4隅の座標を計算
+    # 画像サイズと一致させるため、外側の境界座標を使用
+    h_orig, w_orig = image.shape[:2]
+    original_corners = np.array([
+        [0, 0],              # 左上
+        [w_orig, 0],         # 右上
+        [w_orig, h_orig],    # 右下
+        [0, h_orig]          # 左下
+    ], dtype=np.float32).reshape(-1, 1, 2)
 
+    # 変換後の座標を計算
+    transformed_corner_points = cv2.perspectiveTransform(original_corners, final_matrix)
 
-def trim_green_background(image, threshold=250, margin=10):
-    """
-    画像から緑色の背景部分を除去してトリミングする。
-    上下左右それぞれで「緑色のピクセルが1つもない最初の行/列」を境界とする。
+    # 座標をリスト形式に変換 [(x1, y1), (x2, y2), (x3, y3), (x4, y4)]
+    corner_coords = [(int(pt[0][0]), int(pt[0][1])) for pt in transformed_corner_points]
 
-    Args:
-        image: 入力画像（BGR形式）
-        threshold: 緑色判定の許容値（0～255）。デフォルト250（ほぼ完全な緑）。
-        margin: トリミング後に追加する余白のピクセル数。
+    if draw_corners:
+        # 変換後の4隅にマーカーを描画する
+        for i, corner in enumerate(transformed_corner_points):
+            x, y = int(corner[0][0]), int(corner[0][1])
+            cv2.circle(transformed, (x, y), 15, (255, 0, 0), -1)  # 塗りつぶし
 
-    Returns:
-        トリミングされた画像（または None）
-    """
-    if image is None:
-        return None
-
-    img_h, img_w = image.shape[:2]
-
-    # 緑色を検出（BGR形式）
-    green_lower = np.array([0, threshold, 0])
-    green_upper = np.array([5, 255, 5])  # 少し許容範囲を持たせる
-
-    # 緑色マスク（緑色→255, その他→0）
-    green_mask = cv2.inRange(image, green_lower, green_upper)
-
-    # --- 各方向から「緑が1つもない最初の行/列」を探索 ---
-
-    # 上から下
-    top = 0
-    for y in range(img_h):
-        if np.all(green_mask[y, :] == 0):  # 緑が1つもない行
-            top = y
-            break
-
-    # 下から上
-    bottom = img_h - 1
-    for y in range(img_h - 1, -1, -1):
-        if np.all(green_mask[y, :] == 0):
-            bottom = y
-            break
-
-    # 左から右
-    left = 0
-    for x in range(img_w):
-        if np.all(green_mask[:, x] == 0):
-            left = x
-            break
-
-    # 右から左
-    right = img_w - 1
-    for x in range(img_w - 1, -1, -1):
-        if np.all(green_mask[:, x] == 0):
-            right = x
-            break
-
-    # マージンを適用（画像範囲内に収める）
-    top = max(0, top - margin)
-    bottom = min(img_h - 1, bottom + margin)
-    left = max(0, left - margin)
-    right = min(img_w - 1, right + margin)
-
-    print(f"Trimming coordinates: top={top}, bottom={bottom}, left={left}, right={right}")
-
-    # トリミング（bottom, rightを含むため+1）
-    cropped = image[top:bottom+1, left:right+1]
-
-    return cropped
+    return transformed, final_matrix, (output_width, output_height), corner_coords

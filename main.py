@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import requests
 
 # Ensure Qt uses PySide6's plugins rather than OpenCV's bundled plugins which can cause
 # "Could not load the Qt platform plugin 'xcb'" errors. We set QT_PLUGIN_PATH to PySide6
@@ -31,8 +32,7 @@ from image_processing import (
     calculate_marker_rotation,
     correct_rotation,
     draw_debug_grid,
-    perspective_transform_from_marker,
-    trim_green_background
+    perspective_transform_from_marker
 )
 
 
@@ -316,8 +316,6 @@ class CameraWindow(QtWidgets.QMainWindow):
         toast.show()
 
     def update_frame(self):
-        print("Updating frame...")
-
         try:
             ret, frame = self.cap.read()
             if not ret:
@@ -337,7 +335,7 @@ class CameraWindow(QtWidgets.QMainWindow):
             print(f"Warning: Frame read error: {e}")
             return
 
-        print(f"Captured frame size: {frame.shape[1]}x{frame.shape[0]}")
+        # print(f"Captured frame size: {frame.shape[1]}x{frame.shape[0]}")
 
         # keep original BGR for saving/ocr
         self.current_frame = frame.copy()
@@ -441,6 +439,20 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.video_label.setPixmap(pix)
 
     def take_picture(self):
+        url = "http://192.168.110.102:8080/photoaf.jpg"
+
+        # 画像取得
+        response = requests.get(url)
+        if response.status_code != 200:
+            print("画像を取得できませんでした")
+            return
+
+        # バイト列をNumPy配列に変換
+        img_array = np.frombuffer(response.content, dtype=np.uint8)
+
+        # OpenCVでデコード
+        self.current_frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+
         if self.current_frame is None:
             return
 
@@ -474,9 +486,13 @@ class CameraWindow(QtWidgets.QMainWindow):
 
         # ステップ1: 台形補正（透視変換）を適用
         # マーカーの四隅の座標から画像全体を正面から見た状態に変換
-        perspective_frame, transform_matrix, output_size = perspective_transform_from_marker(
-            self.current_frame, corners, marker_size_mm=50, output_dpi=300
+        perspective_frame, transform_matrix, output_size, corner_coords = perspective_transform_from_marker(
+            self.current_frame, corners, marker_size_mm=80, output_dpi=300
         )
+
+        # perspective_frameのサイズをprintする
+        print(f"Perspective transformed frame size: {perspective_frame.shape[1]}x{perspective_frame.shape[0]}" if perspective_frame is not None else "Perspective transform failed.")
+        print(f"corner coords: {corner_coords}")
 
         # 台形補正が成功した場合はその画像を使用、失敗した場合は元の画像を使用
         if perspective_frame is not None:
@@ -490,75 +506,21 @@ class CameraWindow(QtWidgets.QMainWindow):
             processing_frame = self.current_frame.copy()
             perspective_applied = False
 
-
-        # warpPerspective の後
-        mask = cv2.inRange(processing_frame, (0, 200, 0), (80, 255, 80))  # 緑検出マスク (白=緑、黒=非緑)
-
-        if self.debug_mode:
-            mask_filename = os.path.join(subject_dir, f'capture_{ts}_1_mask.jpg')
-            cv2.imwrite(mask_filename, mask)
-
-        # 上下左右1pxずつ削った画像を作る
-        mask_trimmed = mask[1:-1, 1:-1]
-
-        if self.debug_mode:
-            mask_trimmed_filename = os.path.join(subject_dir, f'capture_{ts}_1_mask_trimmed.jpg')
-            cv2.imwrite(mask_trimmed_filename, mask_trimmed)
-
-        # 非緑部分のマスク (白=非緑、黒=緑)
-        not_green = cv2.bitwise_not(mask_trimmed)
-
-        if self.debug_mode:
-            not_green_filename = os.path.join(subject_dir, f'capture_{ts}_1_not_green.jpg')
-            cv2.imwrite(not_green_filename, not_green)
-
-        # not_green: 白 = 非緑領域、黒 = 緑領域
-        # 白い部分（非緑=残したい部分）がある範囲を検出
-        ys, xs = np.where(not_green == 255)
-
-        if len(xs) > 0 and len(ys) > 0:
-            # 非緑部分を囲む矩形 (mask_trimmedの座標系)
-            top, bottom = np.min(ys), np.max(ys)
-            left, right = np.min(xs), np.max(xs)
-
-            # mask_trimmedは1px削った画像なので、元の座標に戻す (+1)
-            top += 1
-            bottom += 1
-            left += 1
-            right += 1
-
-            print(f"Cropping to non-green area: top={top}, bottom={bottom}, left={left}, right={right}")
-            print(f"もともとのサイズ: {processing_frame.shape[1]}x{processing_frame.shape[0]}")
-
-            # 非緑部分を含む範囲を切り取って残す
-            # 緑色の領域は除外され、黒や他の色はこの範囲に含まれる
-            cropped = processing_frame[top:bottom+1, left:right+1]
-        else:
-            # 非緑部分が見つからない場合は元の画像をそのまま使用
-            cropped = processing_frame
-
-        cv2.imwrite(os.path.join(subject_dir, f'capture_{ts}_cropped.jpg'), cropped)
-
-        # processing_frameを上下左右10pxずつ削った画像を作る
-        processing_frame_trimmed = processing_frame[10:-10, 10:-10]
-
-        # ステップ2: トリミング（緑色の背景を除去）
-        trimmed_frame = trim_green_background(processing_frame_trimmed, threshold=253, margin=0)
-        if self.debug_mode:
-            trimmed_filename = os.path.join(subject_dir, f'capture_{ts}_2_trimmed.jpg')
-            cv2.imwrite(trimmed_filename, trimmed_frame)
+        # ステップ2: トリミング
+        pass
 
         # ステップ3: 回転補正を実行（トリミング後の画像に対して）
         # トリミング後の画像でマーカーを再検出
-        gray_trimmed = cv2.cvtColor(trimmed_frame, cv2.COLOR_BGR2GRAY)
+        gray_trimmed = cv2.cvtColor(processing_frame, cv2.COLOR_BGR2GRAY)
         corners_trimmed, ids_trimmed, _ = self.detector.detectMarkers(gray_trimmed)
 
         if corners_trimmed is not None and len(corners_trimmed) > 0:
             marker_angle = calculate_marker_rotation(corners_trimmed)
-            rotated_frame, rotation_applied = correct_rotation(trimmed_frame, marker_angle)
+            rotated_frame, rotation_applied = correct_rotation(
+                processing_frame, marker_angle)
         else:
             # マーカーが検出できない場合は回転補正をスキップ
-            rotated_frame = trimmed_frame
+            rotated_frame = processing_frame
             rotation_applied = 0.0
 
         if self.debug_mode:
@@ -587,15 +549,12 @@ class CameraWindow(QtWidgets.QMainWindow):
 
         # ファイル名を生成して最終画像を保存
         filename = os.path.join(subject_dir, f'capture_{ts}.png')
-
-        # 画像を保存
         cv2.imwrite(filename, corrected_frame)
 
         # デバッグモードの場合、グリッド付きの画像も保存
         if self.debug_mode and viz_info is not None:
             debug_frame = draw_debug_grid(corrected_frame, viz_info)
-            # デバッグ画像を保存
-            debug_filename = os.path.join(subject_dir, f'capture_{ts}_debug.png')
+            debug_filename = os.path.join(subject_dir, f'capture_{ts}_5_grid.png')
             cv2.imwrite(debug_filename, debug_frame)
 
         # show the saved image in the video_label

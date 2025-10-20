@@ -48,7 +48,7 @@ class OCRWorker(QtCore.QThread):
             import pandas as pd
 
             # 信頼度しきい値（0-100）
-            confidence_threshold = 60
+            confidence_threshold = 50
 
             # 日本語OCR（信頼度付き）
             data_jpn = pytesseract.image_to_data(
