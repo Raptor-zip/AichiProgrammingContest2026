@@ -506,8 +506,75 @@ class CameraWindow(QtWidgets.QMainWindow):
             processing_frame = self.current_frame.copy()
             perspective_applied = False
 
-        # ステップ2: トリミング
-        pass
+        # ステップ2: トリミングをやめ、検出された四角形を描画し、ハフ変換で直線も描画する
+        # (処理用のフレームはそのまま使用し、描画はコピー上で行う)
+        overlay = processing_frame.copy()
+
+        # エッジ検出と輪郭検出による用紙の検出（トリミングは行わない）
+        gray_trim = cv2.cvtColor(processing_frame, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray_trim, (5, 5), 0)
+        edges = cv2.Canny(blur, 50, 150)
+
+        # 輪郭検出
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+        paper_corners = None
+        for cnt in contours:
+            approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
+            if len(approx) == 4:
+                paper_corners = approx.reshape(4, 2)
+                break
+
+        # 検出された四角形を描画
+        if paper_corners is not None:
+            pts = paper_corners.astype(int)
+            # 線を描く
+            cv2.polylines(overlay, [pts], isClosed=True, color=(0, 255, 0), thickness=3)
+            # 四隅に小さい円を描画
+            for (x, y) in pts:
+                cv2.circle(overlay, (int(x), int(y)), 6, (0, 255, 0), -1)
+
+        # ハフ変換で直線検出
+        try:
+            lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=160, minLineLength=240, maxLineGap=30)
+        except Exception:
+            lines = None
+
+        if lines is not None:
+            for l in lines:
+                x1, y1, x2, y2 = l[0]
+                # 角度を計算（度単位）。atan2 の結果はラジアン。
+                dy = y2 - y1
+                dx = x2 - x1
+                angle_rad = np.arctan2(dy, dx)
+                angle_deg = np.degrees(angle_rad)
+                # 正規化して 0..180 の範囲にする（絶対角度）
+                abs_angle = abs(angle_deg)
+                if abs_angle > 180:
+                    abs_angle = abs_angle % 180
+
+                # 色分け: -5..5 度 (ほぼ水平) -> 赤, 85..95 度 (ほぼ垂直) -> 緑, それ以外 -> 灰
+                # 角度は signed だがほとんど水平判定は abs(angle) <= 5 として扱う
+                color = (192, 192, 192)  # デフォルト灰 (BGR)
+                # 水平付近（-5〜5度）
+                if -5.0 <= angle_deg <= 5.0:
+                    color = (0, 0, 255)  # 赤 (B,G,R)
+                # 垂直付近（85〜95度 または -95〜-85）
+                elif 85.0 <= abs_angle <= 95.0:
+                    color = (0, 255, 0)  # 緑
+
+                cv2.line(overlay, (x1, y1), (x2, y2), color, 2)
+
+        # デバッグモード: 検出結果（四角 + 直線）を保存
+        if self.debug_mode:
+            detected_filename = os.path.join(subject_dir, f'capture_{ts}_2_detected.jpg')
+            cv2.imwrite(detected_filename, overlay)
+
+        # 描画入りの画像をそのまま次ステップに渡す（トリミングはしない）
+        processing_frame = overlay
+
+        # ステップ3: 回転補正を実行(トリミング後の画像に対して)lugins first
 
         # ステップ3: 回転補正を実行（トリミング後の画像に対して）
         # トリミング後の画像でマーカーを再検出
