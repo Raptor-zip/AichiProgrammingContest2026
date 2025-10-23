@@ -23,6 +23,8 @@ import cv2
 import cv2.aruco as aruco
 import numpy as np
 from datetime import datetime
+from yomitoku import DocumentAnalyzer
+# from yomitoku.data.functions import load_pdf
 
 # Import from local modules
 from ui_components import ToastNotification, SubjectSettingsDialog
@@ -653,6 +655,17 @@ class CameraWindow(QtWidgets.QMainWindow):
         toast_msg = f"教科: {subject_name}\nマーカーID: {marker_id}{perspective_info}{rotation_info}\n保存完了"
         toast = ToastNotification(toast_msg, self, duration=4000)
         toast.show()
+
+        analyzer = DocumentAnalyzer(visualize=True, device="cuda")
+
+        results, ocr_vis, layout_vis = analyzer(corrected_frame)
+
+        # HTML形式で解析結果をエクスポート
+        results.to_html(f"output_.html", img=corrected_frame)
+
+        # 可視化画像を保存
+        cv2.imwrite(f"output_ocr_.jpg", ocr_vis)
+        cv2.imwrite(f"output_layout_.jpg", layout_vis)
 
         # run OCR on the saved image (in background)
         worker = OCRWorker(frame=None, image_path=filename, parent=self)
