@@ -277,3 +277,114 @@ def draw_debug_grid(image, viz_info):
                (x, legend_y + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
     return debug_frame
+
+
+def perspective_transform_from_marker(image, corners, marker_size_mm=50, output_dpi=300, draw_corners=False):
+    """
+    ArUcoマーカーの四隅の座標を使って透視変換（台形補正）を行う
+
+    Args:
+        image: 入力画像（BGR形式）
+        corners: ArUcoマーカーの角の座標
+        marker_size_mm: マーカーの実際のサイズ（mm）、デフォルト50mm
+        output_dpi: 出力画像の解像度（DPI）、デフォルト300
+        draw_corners: True の場合、変換後に元画像の4隅にマーカーを描画
+
+    Returns:
+        tuple: (変換後の画像, 変換行列, 出力サイズ(width, height), 変換後の4隅座標)
+               変換後の4隅座標は [(x1,y1), (x2,y2), (x3,y3), (x4,y4)] の形式 (左上、右上、右下、左下)
+               マーカーが検出されない場合は (None, None, None, None)
+    """
+    if corners is None or len(corners) == 0:
+        return None, None, None, None
+
+    # 最初のマーカーの四隅の座標を取得
+    # ArUcoマーカーの角の順序: 左上、右上、右下、左下
+    src_points = corners[0].reshape(4, 2).astype(np.float32)
+
+    # マーカーの実サイズから出力画像のピクセルサイズを計算
+    # DPI (dots per inch) から mm あたりのピクセル数を計算
+    # 1 inch = 25.4 mm
+    pixels_per_mm = output_dpi / 25.4
+    marker_size_pixels = int(marker_size_mm * pixels_per_mm)
+
+    # 変換先の座標（正方形のマーカー）
+    # 左上、右上、右下、左下の順
+    dst_points = np.array([
+        [0, 0],
+        [marker_size_pixels, 0],
+        [marker_size_pixels, marker_size_pixels],
+        [0, marker_size_pixels]
+    ], dtype=np.float32)
+
+    # 透視変換行列を計算
+    matrix = cv2.getPerspectiveTransform(src_points, dst_points)
+
+    # 画像全体を変換するために、画像の四隅も変換してみる
+    h, w = image.shape[:2]
+    image_corners = np.array([
+        [0, 0],
+        [w, 0],
+        [w, h],
+        [0, h]
+    ], dtype=np.float32).reshape(-1, 1, 2)
+
+    # 画像の四隅を変換
+    transformed_corners = cv2.perspectiveTransform(image_corners, matrix)
+
+    # 変換後の画像サイズを計算（全ての変換後の点を含む最小矩形）
+    x_coords = transformed_corners[:, 0, 0]
+    y_coords = transformed_corners[:, 0, 1]
+
+    min_x = int(np.floor(np.min(x_coords)))
+    max_x = int(np.ceil(np.max(x_coords)))
+    min_y = int(np.floor(np.min(y_coords)))
+    max_y = int(np.ceil(np.max(y_coords)))
+
+    # 出力サイズ
+    output_width = max_x - min_x
+    output_height = max_y - min_y
+
+    # オフセット行列を作成（負の座標を補正）
+    offset_matrix = np.array([
+        [1, 0, -min_x],
+        [0, 1, -min_y],
+        [0, 0, 1]
+    ], dtype=np.float32)
+
+    # 最終的な変換行列 = オフセット行列 × 透視変換行列
+    final_matrix = offset_matrix @ matrix
+
+    # 透視変換を適用
+    transformed = cv2.warpPerspective(
+        image,
+        final_matrix,
+        (output_width, output_height),
+        flags=cv2.INTER_NEAREST,   # 補間を行わない
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255)
+    )
+
+    # 元画像の4隅の座標を計算
+    # 画像サイズと一致させるため、外側の境界座標を使用
+    h_orig, w_orig = image.shape[:2]
+    original_corners = np.array([
+        [0, 0],              # 左上
+        [w_orig, 0],         # 右上
+        [w_orig, h_orig],    # 右下
+        [0, h_orig]          # 左下
+    ], dtype=np.float32).reshape(-1, 1, 2)
+
+    # 変換後の座標を計算
+    transformed_corner_points = cv2.perspectiveTransform(original_corners, final_matrix)
+
+    # 座標をリスト形式に変換 [(x1, y1), (x2, y2), (x3, y3), (x4, y4)]
+    corner_coords = [(int(pt[0][0]), int(pt[0][1])) for pt in transformed_corner_points]
+
+    if draw_corners:
+        # 変換後の4隅にマーカーを描画する
+        for i, corner in enumerate(transformed_corner_points):
+            x, y = int(corner[0][0]), int(corner[0][1])
+            cv2.circle(transformed, (x, y), 15, (255, 0, 0), -1)  # 塗りつぶし
+
+    return transformed, final_matrix, (output_width, output_height), corner_coords

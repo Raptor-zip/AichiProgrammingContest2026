@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import requests
 
 # Ensure Qt uses PySide6's plugins rather than OpenCV's bundled plugins which can cause
 # "Could not load the Qt platform plugin 'xcb'" errors. We set QT_PLUGIN_PATH to PySide6
@@ -22,6 +23,8 @@ import cv2
 import cv2.aruco as aruco
 import numpy as np
 from datetime import datetime
+from yomitoku import DocumentAnalyzer
+# from yomitoku.data.functions import load_pdf
 
 # Import from local modules
 from ui_components import ToastNotification, SubjectSettingsDialog
@@ -30,7 +33,8 @@ from image_processing import (
     auto_white_balance,
     calculate_marker_rotation,
     correct_rotation,
-    draw_debug_grid
+    draw_debug_grid,
+    perspective_transform_from_marker
 )
 from chatgpt import AIProcessingDialog
 
@@ -340,8 +344,6 @@ class CameraWindow(QtWidgets.QMainWindow):
         toast.show()
 
     def update_frame(self):
-        print("Updating frame...")
-
         try:
             ret, frame = self.cap.read()
             if not ret:
@@ -361,7 +363,7 @@ class CameraWindow(QtWidgets.QMainWindow):
             print(f"Warning: Frame read error: {e}")
             return
 
-        print(f"Captured frame size: {frame.shape[1]}x{frame.shape[0]}")
+        # print(f"Captured frame size: {frame.shape[1]}x{frame.shape[0]}")
 
         # keep original BGR for saving/ocr
         self.current_frame = frame.copy()
@@ -465,6 +467,20 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.video_label.setPixmap(pix)
 
     def take_picture(self):
+        url = "http://192.168.110.102:8080/photoaf.jpg"
+
+        # 画像取得
+        response = requests.get(url)
+        if response.status_code != 200:
+            print("画像を取得できませんでした")
+            return
+
+        # バイト列をNumPy配列に変換
+        img_array = np.frombuffer(response.content, dtype=np.uint8)
+
+        # OpenCVでデコード
+        self.current_frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+
         if self.current_frame is None:
             return
 
@@ -491,11 +507,125 @@ class CameraWindow(QtWidgets.QMainWindow):
         subject_dir = os.path.join(self.captures_dir, subject_name)
         os.makedirs(subject_dir, exist_ok=True)
 
-        # まず回転補正を実行
-        marker_angle = calculate_marker_rotation(corners)
-        rotated_frame, rotation_applied = correct_rotation(self.current_frame, marker_angle)
+        # タイムスタンプを生成（全てのファイルで共通）
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-        # 回転後の画像に対してホワイトバランス補正を適用
+        # ステップ0: 元の画像を保存（デバッグモード）
+        if self.debug_mode:
+            original_filename = os.path.join(subject_dir, f'capture_{ts}_0_original.jpg')
+            cv2.imwrite(original_filename, self.current_frame)
+
+        # ステップ1: 台形補正（透視変換）を適用
+        # マーカーの四隅の座標から画像全体を正面から見た状態に変換
+        perspective_frame, transform_matrix, output_size, corner_coords = perspective_transform_from_marker(
+            self.current_frame, corners, marker_size_mm=80, output_dpi=300
+        )
+
+        # perspective_frameのサイズをprintする
+        print(f"Perspective transformed frame size: {perspective_frame.shape[1]}x{perspective_frame.shape[0]}" if perspective_frame is not None else "Perspective transform failed.")
+        print(f"corner coords: {corner_coords}")
+
+        # 台形補正が成功した場合はその画像を使用、失敗した場合は元の画像を使用
+        if perspective_frame is not None:
+            processing_frame = perspective_frame
+            perspective_applied = True
+            # デバッグモード: 台形補正後の画像を保存
+            if self.debug_mode:
+                perspective_filename = os.path.join(subject_dir, f'capture_{ts}_1_perspective.jpg')
+                cv2.imwrite(perspective_filename, perspective_frame)
+        else:
+            processing_frame = self.current_frame.copy()
+            perspective_applied = False
+
+        # ステップ2: トリミングをやめ、検出された四角形を描画し、ハフ変換で直線も描画する
+        # (処理用のフレームはそのまま使用し、描画はコピー上で行う)
+        overlay = processing_frame.copy()
+
+        # エッジ検出と輪郭検出による用紙の検出（トリミングは行わない）
+        gray_trim = cv2.cvtColor(processing_frame, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray_trim, (5, 5), 0)
+        edges = cv2.Canny(blur, 50, 150)
+
+        # 輪郭検出
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+        paper_corners = None
+        for cnt in contours:
+            approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
+            if len(approx) == 4:
+                paper_corners = approx.reshape(4, 2)
+                break
+
+        # 検出された四角形を描画
+        if paper_corners is not None:
+            pts = paper_corners.astype(int)
+            # 線を描く
+            cv2.polylines(overlay, [pts], isClosed=True, color=(0, 255, 0), thickness=3)
+            # 四隅に小さい円を描画
+            for (x, y) in pts:
+                cv2.circle(overlay, (int(x), int(y)), 6, (0, 255, 0), -1)
+
+        # ハフ変換で直線検出
+        try:
+            lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=160, minLineLength=240, maxLineGap=30)
+        except Exception:
+            lines = None
+
+        if lines is not None:
+            for l in lines:
+                x1, y1, x2, y2 = l[0]
+                # 角度を計算（度単位）。atan2 の結果はラジアン。
+                dy = y2 - y1
+                dx = x2 - x1
+                angle_rad = np.arctan2(dy, dx)
+                angle_deg = np.degrees(angle_rad)
+                # 正規化して 0..180 の範囲にする（絶対角度）
+                abs_angle = abs(angle_deg)
+                if abs_angle > 180:
+                    abs_angle = abs_angle % 180
+
+                # 色分け: -5..5 度 (ほぼ水平) -> 赤, 85..95 度 (ほぼ垂直) -> 緑, それ以外 -> 灰
+                # 角度は signed だがほとんど水平判定は abs(angle) <= 5 として扱う
+                color = (192, 192, 192)  # デフォルト灰 (BGR)
+                # 水平付近（-5〜5度）
+                if -5.0 <= angle_deg <= 5.0:
+                    color = (0, 0, 255)  # 赤 (B,G,R)
+                # 垂直付近（85〜95度 または -95〜-85）
+                elif 85.0 <= abs_angle <= 95.0:
+                    color = (0, 255, 0)  # 緑
+
+                cv2.line(overlay, (x1, y1), (x2, y2), color, 2)
+
+        # デバッグモード: 検出結果（四角 + 直線）を保存
+        if self.debug_mode:
+            detected_filename = os.path.join(subject_dir, f'capture_{ts}_2_detected.jpg')
+            cv2.imwrite(detected_filename, overlay)
+
+        # 描画入りの画像をそのまま次ステップに渡す（トリミングはしない）
+        processing_frame = overlay
+
+        # ステップ3: 回転補正を実行(トリミング後の画像に対して)lugins first
+
+        # ステップ3: 回転補正を実行（トリミング後の画像に対して）
+        # トリミング後の画像でマーカーを再検出
+        gray_trimmed = cv2.cvtColor(processing_frame, cv2.COLOR_BGR2GRAY)
+        corners_trimmed, ids_trimmed, _ = self.detector.detectMarkers(gray_trimmed)
+
+        if corners_trimmed is not None and len(corners_trimmed) > 0:
+            marker_angle = calculate_marker_rotation(corners_trimmed)
+            rotated_frame, rotation_applied = correct_rotation(
+                processing_frame, marker_angle)
+        else:
+            # マーカーが検出できない場合は回転補正をスキップ
+            rotated_frame = processing_frame
+            rotation_applied = 0.0
+
+        if self.debug_mode:
+            rotated_filename = os.path.join(subject_dir, f'capture_{ts}_3_rotated.jpg')
+            cv2.imwrite(rotated_filename, rotated_frame)
+
+        # ステップ4: 回転後の画像に対してホワイトバランス補正を適用
         if self.white_balance_enabled:
             # 回転後の画像でマーカーを再検出
             gray_rotated = cv2.cvtColor(rotated_frame, cv2.COLOR_BGR2GRAY)
@@ -511,18 +641,18 @@ class CameraWindow(QtWidgets.QMainWindow):
             corrected_frame = rotated_frame
             viz_info, white_bgr, black_bgr = None, None, None
 
-        # ファイル名を生成して保存
-        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = os.path.join(subject_dir, f'capture_{ts}.png')
+        if self.debug_mode:
+            wb_filename = os.path.join(subject_dir, f'capture_{ts}_4_white_balance.jpg')
+            cv2.imwrite(wb_filename, corrected_frame)
 
-        # 画像を保存
+        # ファイル名を生成して最終画像を保存
+        filename = os.path.join(subject_dir, f'capture_{ts}.png')
         cv2.imwrite(filename, corrected_frame)
 
         # デバッグモードの場合、グリッド付きの画像も保存
         if self.debug_mode and viz_info is not None:
             debug_frame = draw_debug_grid(corrected_frame, viz_info)
-            # デバッグ画像を保存
-            debug_filename = os.path.join(subject_dir, f'capture_{ts}_debug.png')
+            debug_filename = os.path.join(subject_dir, f'capture_{ts}_5_grid.png')
             cv2.imwrite(debug_filename, debug_frame)
 
         # show the saved image in the video_label
@@ -549,10 +679,22 @@ class CameraWindow(QtWidgets.QMainWindow):
             self.paused_display_frame = corrected_frame.copy()
 
         # トースト通知で保存完了を表示（2秒後に自動で消える）
+        perspective_info = "\n台形補正: 適用" if perspective_applied else ""
         rotation_info = f"\n回転補正: {rotation_applied:.1f}度" if abs(rotation_applied) >= 1.0 else ""
-        toast_msg = f"教科: {subject_name}\nマーカーID: {marker_id}{rotation_info}\n保存完了"
+        toast_msg = f"教科: {subject_name}\nマーカーID: {marker_id}{perspective_info}{rotation_info}\n保存完了"
         toast = ToastNotification(toast_msg, self, duration=4000)
         toast.show()
+
+        analyzer = DocumentAnalyzer(visualize=True, device="cuda")
+
+        results, ocr_vis, layout_vis = analyzer(corrected_frame)
+
+        # HTML形式で解析結果をエクスポート
+        results.to_html(f"output_.html", img=corrected_frame)
+
+        # 可視化画像を保存
+        cv2.imwrite(f"output_ocr_.jpg", ocr_vis)
+        cv2.imwrite(f"output_layout_.jpg", layout_vis)
 
         # run OCR on the saved image (in background)
         worker = OCRWorker(frame=None, image_path=filename, parent=self)
