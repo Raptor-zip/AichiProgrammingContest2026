@@ -32,6 +32,7 @@ from image_processing import (
     correct_rotation,
     draw_debug_grid
 )
+from chatgpt import AIProcessingDialog
 
 
 class CameraWindow(QtWidgets.QMainWindow):
@@ -114,8 +115,18 @@ class CameraWindow(QtWidgets.QMainWindow):
                     stop:0 #2196F3, stop:1 #1976D2);
             }
             QPushButton#resumeButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #42A5F5, stop:1 #2196F3);
+                background: #4CAF50;
+            }
+            
+            QPushButton#aiButton {
+                background: #9C27B0;
+            }
+            QPushButton#aiButton:hover {
+                background: #7B1FA2;
+            }
+            QPushButton#aiButton:disabled {
+                background: #666666;
+                color: #999999;
             }
             QTextEdit {
                 background-color: #16213e;
@@ -145,15 +156,18 @@ class CameraWindow(QtWidgets.QMainWindow):
 
         # Video capture
         # self.cap = cv2.VideoCapture(0)
-        try:
-            self.cap = cv2.VideoCapture("http://192.168.110.102:8080/video")
-        except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "Error", f"Cannot initialize camera stream: {e}")
-            sys.exit(1)
-
+        self.cap = cv2.VideoCapture("http://192.168.110.102:8080/video")
         if not self.cap.isOpened():
+            self.cap = cv2.VideoCapture(0)
             QtWidgets.QMessageBox.critical(self, "Error", "Cannot open camera")
-            sys.exit(1)
+            print("Initialized camera stream from IP camera.")
+
+        print("Initialized camera stream from default webcam.")
+            
+            # QtWidgets.QMessageBox.critical(self, "Error", f"Cannot initialize camera stream: {e}")
+            # sys.exit(1)
+
+    
 
         # Set buffer size to 1 to always get the latest frame and prevent latency buildup
         # This is critical when stream FPS > processing FPS (e.g., 60fps stream with 33fps timer)
@@ -230,6 +244,14 @@ class CameraWindow(QtWidgets.QMainWindow):
             40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
         controls.addItem(spacer)
 
+        # AI処理ボタンを追加
+        self.ai_process_btn = QtWidgets.QPushButton("🤖 AI処理")
+        self.ai_process_btn.setObjectName("aiButton")
+        self.ai_process_btn.clicked.connect(self.open_ai_processing)
+        self.ai_process_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.ai_process_btn.setEnabled(False)  # 初期状態では無効
+        controls.addWidget(self.ai_process_btn)
+
         # 撮影後に一時停止したライブフィードを再開するボタン
         self.resume_btn = QtWidgets.QPushButton("📷 撮影再開")
         self.resume_btn.setObjectName("resumeButton")
@@ -264,6 +286,10 @@ class CameraWindow(QtWidgets.QMainWindow):
         # Flag to pause camera feed display (but keep reading frames to maintain stream sync)
         self.camera_paused = False
         self.paused_display_frame = None
+        
+        # 最後のOCR結果を保存（AI処理用）
+        self.last_ocr_text = ""
+        self.last_subject_name = ""
 
     def load_subject_mappings(self):
         """JSONファイルから教科マッピングを読み込む"""
@@ -457,6 +483,9 @@ class CameraWindow(QtWidgets.QMainWindow):
 
         # マーカーIDに対応する教科名を取得
         subject_name = self.subject_mappings.get(marker_id, "未分類")
+        
+        # 教科名を保存（AI処理用）
+        self.last_subject_name = subject_name
 
         # 教科ごとのフォルダを作成
         subject_dir = os.path.join(self.captures_dir, subject_name)
@@ -564,6 +593,25 @@ class CameraWindow(QtWidgets.QMainWindow):
     def on_ocr_result(self, text):
         self.ocr_output.append(
             f"[{datetime.now().strftime('%H:%M:%S')}] {text}")
+        
+        # OCR結果を保存してAI処理ボタンを有効化
+        self.last_ocr_text = text
+        if text.strip():  # テキストが空でない場合のみ有効化
+            self.ai_process_btn.setEnabled(True)
+        else:
+            self.ai_process_btn.setEnabled(False)
+
+    def open_ai_processing(self):
+        """AI処理ダイアログを開く"""
+        if not self.last_ocr_text.strip():
+            QtWidgets.QMessageBox.information(
+                self, "情報", "処理するテキストがありません。\n先に画像を撮影してOCRを実行してください。"
+            )
+            return
+        
+        # AI処理ダイアログを表示
+        dialog = AIProcessingDialog(self, self.last_ocr_text, self.last_subject_name)
+        dialog.exec()
 
     def closeEvent(self, event):
         self.timer.stop()
