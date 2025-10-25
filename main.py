@@ -733,12 +733,14 @@ class CameraWindow(QtWidgets.QMainWindow):
         # 可視化画像を保存（存在する場合のみ）
         if ocr_vis is not None:
             try:
-                cv2.imwrite(f"output_ocr_.jpg", ocr_vis)
+                ocr_filename = os.path.join(subject_dir, f'capture_{ts}_ocr_vis.jpg')
+                cv2.imwrite(ocr_filename, ocr_vis)
             except Exception as e:
                 print(f"Warning: failed to save ocr_vis: {e}")
         if layout_vis is not None:
             try:
-                cv2.imwrite(f"output_layout_.jpg", layout_vis)
+                layout_filename = os.path.join(subject_dir, f'capture_{ts}_layout_vis.jpg')
+                cv2.imwrite(layout_filename, layout_vis)
             except Exception as e:
                 print(f"Warning: failed to save layout_vis: {e}")
 
