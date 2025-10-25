@@ -46,7 +46,7 @@ class CameraWindow(QtWidgets.QMainWindow):
     def __init__(self, debug_mode=False):
         super().__init__()
         self.setWindowTitle("Aruco + OCR Camera")
-        self.resize(1200, 800)
+        self.resize(1200,800)
 
         # ウィンドウアイコンを設定
         icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
