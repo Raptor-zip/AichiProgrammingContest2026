@@ -11,19 +11,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # コードをチェックアウト
-      - uses: actions/checkout@v3
+      # コードをチェックアウト（GITHUB_TOKENでpush可能）
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: true
 
       # Python セットアップ
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       # Black と isort をインストール
       - name: Install dependencies
         run: |
-          pip install black isort
+          pip install black==23.7.0 isort==5.12.0
 
       # コード整形
       - name: Format code
@@ -33,9 +36,13 @@ jobs:
 
       # 変更があれば自動コミット
       - name: Commit changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add .
+          # 差分がある場合のみコミット
           git diff --quiet || git commit -m "Apply Black and isort"
-          git push
+          # 現在のブランチに push
+          git push origin HEAD:${{ github.ref_name }}
