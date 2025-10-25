@@ -121,7 +121,7 @@ class CameraWindow(QtWidgets.QMainWindow):
             QPushButton#resumeButton:hover {
                 background: #4CAF50;
             }
-            
+
             QPushButton#aiButton {
                 background: #9C27B0;
             }
@@ -158,20 +158,37 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.settings_file = os.path.join(os.path.dirname(__file__), 'subject_mappings.json')
         self.subject_mappings = self.load_subject_mappings()
 
-        # Video capture
-        # self.cap = cv2.VideoCapture(0)
-        self.cap = cv2.VideoCapture("http://192.168.110.102:8080/video")
-        if not self.cap.isOpened():
-            self.cap = cv2.VideoCapture(0)
-            QtWidgets.QMessageBox.critical(self, "Error", "Cannot open camera")
-            print("Initialized camera stream from IP camera.")
+        # Video capture: try network MJPEG stream first, but verify we can actually read a frame.
+        # If the stream can't provide frames, fall back to the local camera (index 0).
+        def try_open_capture(source, tries=3):
+            cap = cv2.VideoCapture(source)
+            if not cap.isOpened():
+                return None
+            # quick read-check: attempt to read one frame (with small flush attempts)
+            for _ in range(tries):
+                ret, _ = cap.read()
+                if ret:
+                    return cap
+            # no frames read -> treat as failure
+            try:
+                cap.release()
+            except Exception:
+                pass
+            return None
 
-        print("Initialized camera stream from default webcam.")
-            
-            # QtWidgets.QMessageBox.critical(self, "Error", f"Cannot initialize camera stream: {e}")
-            # sys.exit(1)
+        self.cap = try_open_capture("http://192.168.110.102:8080/video", tries=3)
+        self.cap_type = 'network'
+        if self.cap is None:
+            # try the default local camera
+            self.cap = try_open_capture(0, tries=3)
+            self.cap_type = 'local'
 
-    
+        if self.cap is None:
+            # show a user-friendly error and stop initialization
+            QtWidgets.QMessageBox.critical(
+                self, "エラー", "カメラを開くことができませんでした。ネットワークカメラとローカルカメラの両方を確認してください。")
+            # raise an exception so caller can handle it (or exit in main)
+            raise RuntimeError("Failed to open any camera source")
 
         # Set buffer size to 1 to always get the latest frame and prevent latency buildup
         # This is critical when stream FPS > processing FPS (e.g., 60fps stream with 33fps timer)
@@ -290,7 +307,7 @@ class CameraWindow(QtWidgets.QMainWindow):
         # Flag to pause camera feed display (but keep reading frames to maintain stream sync)
         self.camera_paused = False
         self.paused_display_frame = None
-        
+
         # 最後のOCR結果を保存（AI処理用）
         self.last_ocr_text = ""
         self.last_subject_name = ""
@@ -467,19 +484,22 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.video_label.setPixmap(pix)
 
     def take_picture(self):
-        url = "http://192.168.110.102:8080/photoaf.jpg"
+        if self.cap_type == 'network':
+            url = "http://192.168.110.102:8080/photoaf.jpg"
+            response = requests.get(url)
+            if response.status_code != 200:
+                print("画像を取得できませんでした")
+                return
+            # バイト列をNumPy配列に変換
+            img_array = np.frombuffer(response.content, dtype=np.uint8)
 
-        # 画像取得
-        response = requests.get(url)
-        if response.status_code != 200:
-            print("画像を取得できませんでした")
-            return
-
-        # バイト列をNumPy配列に変換
-        img_array = np.frombuffer(response.content, dtype=np.uint8)
-
-        # OpenCVでデコード
-        self.current_frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+            # OpenCVでデコード
+            self.current_frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        else:
+            # ローカルカメラの場合は現在のフレームを使用
+            if self.current_frame is None:
+                print("現在のフレームがありません")
+                return
 
         if self.current_frame is None:
             return
@@ -499,7 +519,7 @@ class CameraWindow(QtWidgets.QMainWindow):
 
         # マーカーIDに対応する教科名を取得
         subject_name = self.subject_mappings.get(marker_id, "未分類")
-        
+
         # 教科名を保存（AI処理用）
         self.last_subject_name = subject_name
 
@@ -605,9 +625,7 @@ class CameraWindow(QtWidgets.QMainWindow):
         # 描画入りの画像をそのまま次ステップに渡す（トリミングはしない）
         processing_frame = overlay
 
-        # ステップ3: 回転補正を実行(トリミング後の画像に対して)lugins first
-
-        # ステップ3: 回転補正を実行（トリミング後の画像に対して）
+    # ステップ3: 回転補正を実行（トリミング後の画像に対して）
         # トリミング後の画像でマーカーを再検出
         gray_trimmed = cv2.cvtColor(processing_frame, cv2.COLOR_BGR2GRAY)
         corners_trimmed, ids_trimmed, _ = self.detector.detectMarkers(gray_trimmed)
@@ -685,16 +703,44 @@ class CameraWindow(QtWidgets.QMainWindow):
         toast = ToastNotification(toast_msg, self, duration=4000)
         toast.show()
 
-        analyzer = DocumentAnalyzer(visualize=True, device="cuda")
+        # DocumentAnalyzer may raise if CUDA isn't available. Try CUDA first and
+        # fall back to CPU to avoid crashing on systems without GPU support.
+        try:
+            analyzer = DocumentAnalyzer(visualize=True, device="cuda")
+        except Exception:
+            try:
+                analyzer = DocumentAnalyzer(visualize=True, device="cpu")
+            except Exception:
+                analyzer = None
 
-        results, ocr_vis, layout_vis = analyzer(corrected_frame)
+        if analyzer is not None:
+            try:
+                results, ocr_vis, layout_vis = analyzer(corrected_frame)
+            except Exception as e:
+                print(f"Warning: DocumentAnalyzer failed: {e}")
+                results, ocr_vis, layout_vis = None, None, None
+        else:
+            print("Warning: DocumentAnalyzer unavailable (both CUDA and CPU fallback failed). Skipping document analysis.")
+            results, ocr_vis, layout_vis = None, None, None
 
-        # HTML形式で解析結果をエクスポート
-        results.to_html(f"output_.html", img=corrected_frame)
+        # HTML形式で解析結果をエクスポート（analyzer が成功した場合のみ）
+        if results is not None:
+            try:
+                results.to_html(f"output_.html", img=corrected_frame)
+            except Exception as e:
+                print(f"Warning: failed to export analysis to HTML: {e}")
 
-        # 可視化画像を保存
-        cv2.imwrite(f"output_ocr_.jpg", ocr_vis)
-        cv2.imwrite(f"output_layout_.jpg", layout_vis)
+        # 可視化画像を保存（存在する場合のみ）
+        if ocr_vis is not None:
+            try:
+                cv2.imwrite(f"output_ocr_.jpg", ocr_vis)
+            except Exception as e:
+                print(f"Warning: failed to save ocr_vis: {e}")
+        if layout_vis is not None:
+            try:
+                cv2.imwrite(f"output_layout_.jpg", layout_vis)
+            except Exception as e:
+                print(f"Warning: failed to save layout_vis: {e}")
 
         # run OCR on the saved image (in background)
         worker = OCRWorker(frame=None, image_path=filename, parent=self)
@@ -735,7 +781,7 @@ class CameraWindow(QtWidgets.QMainWindow):
     def on_ocr_result(self, text):
         self.ocr_output.append(
             f"[{datetime.now().strftime('%H:%M:%S')}] {text}")
-        
+
         # OCR結果を保存してAI処理ボタンを有効化
         self.last_ocr_text = text
         if text.strip():  # テキストが空でない場合のみ有効化
@@ -750,7 +796,7 @@ class CameraWindow(QtWidgets.QMainWindow):
                 self, "情報", "処理するテキストがありません。\n先に画像を撮影してOCRを実行してください。"
             )
             return
-        
+
         # AI処理ダイアログを表示
         dialog = AIProcessingDialog(self, self.last_ocr_text, self.last_subject_name)
         dialog.exec()
@@ -777,7 +823,12 @@ def main():
     # コマンドライン引数からデバッグモードを取得
     debug_mode = '--debug' in sys.argv or '-d' in sys.argv
 
-    win = CameraWindow(debug_mode=debug_mode)
+    try:
+        win = CameraWindow(debug_mode=debug_mode)
+    except Exception as e:
+        # show a message box and quit cleanly
+        QtWidgets.QMessageBox.critical(None, "起動エラー", f"アプリケーションを開始できませんでした:\n{e}")
+        sys.exit(1)
 
     if debug_mode:
         print("デバッグモードで起動しました。グリッド付き画像も保存されます。")
