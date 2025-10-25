@@ -15,7 +15,7 @@ class YomiTokuWorker(QtCore.QThread):
 
     def __init__(self, frame, parent=None):
         super().__init__(parent)
-        self.frame = frame.copy() if frame is not None else None
+        self.frame = frame.copy( ) if frame is not None else None
 
     def run(self):
         if self.frame is None:
