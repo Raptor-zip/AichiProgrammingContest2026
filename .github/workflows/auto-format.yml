@@ -1,0 +1,41 @@
+name: Auto Format Python
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  auto-format:
+    runs-on: ubuntu-latest
+
+    steps:
+      # コードをチェックアウト
+      - uses: actions/checkout@v3
+
+      # Python セットアップ
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      # Black と isort をインストール
+      - name: Install dependencies
+        run: |
+          pip install black isort
+
+      # コード整形
+      - name: Format code
+        run: |
+          black .
+          isort .
+
+      # 変更があれば自動コミット
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add .
+          git diff --quiet || git commit -m "Apply Black and isort"
+          git push
