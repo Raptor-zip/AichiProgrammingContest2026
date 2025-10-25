@@ -12,13 +12,17 @@
 - **自動科目判別**: ArUcoマーカーを読み取って、プリントの科目を自動判別
 - **自動補正機能**:
   - ホワイトバランス自動調整（6×6グリッド解析）
-  - 回転補正（マーカーの傾きを検出して自動補正）
-- **OCR機能**: 撮影した画像からテキストを抽出（日本語・英語対応）
+  - 回転,台形補正（マーカーの傾きを検出して自動補正）
+- **AI OCR機能**: 撮影した画像からAIが文字とレイアウトを検出
 - **AI学習支援機能**:
--   📝 要約: テキストの重要ポイントを箇条書きで整理
-    ❓ 練習問題作成: 内容に基づいた学習問題を3問生成
-    💡 概念説明: 専門用語を分かりやすく解説
-    📅 学習計画: 効果的な学習スケジュールを提案
+
+    - 📝 要約: テキストの重要ポイントを箇条書きで整理
+
+    - ❓ 練習問題作成: 内容に基づいた学習問題を3問生成
+
+    - 💡 概念説明: 専門用語を分かりやすく解説
+
+    - 📅 学習計画: 効果的な学習スケジュールを提案
 
 ## インストール
 
@@ -33,17 +37,13 @@ cd AichiProgrammingContest2026
 pip install -r requirements.txt
 ```
 
-3.AI学習支援環境のセットアップ
-Ollamaのインストール:
+3. AI学習支援環境のセットアップ
 ```bash
-curl -fsSL https://ollama.com/install.sh | sh￥
-```
-AIモデルのダウンロード:
-```bash
-# 軽量な日本語対応モデル（約1.6GB）
-ollama pull gemma2:2b
+# Ollamaのインストール:
+curl -fsSL https://ollama.com/install.sh | sh
 
-# より高性能なモデル（約4.1GB、推奨）
+# AIモデルのダウンロード:
+ollama pull gemma2:2b
 ollama pull gemma2:9b
 ```
 
@@ -65,7 +65,9 @@ python main.py -d
 
 - **GUI**: PySide6 (Qt for Python)
 - **画像処理**: OpenCV
-- **ArUcoマーカー検出**: cv2.aruco
-- **OCR**: YomiToku
+- **ARマーカー検出**: cv2.aruco
+- **AI OCR**: YomiToku
+- **AI学習支援**: Ollama + Gemma-2
+- **画像処理**: OpenCV, NumPy
 - **画像変換**: Pillow (PIL)
 - **言語**: Python 3.10+
