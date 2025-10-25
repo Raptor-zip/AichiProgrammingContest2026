@@ -29,10 +29,15 @@ import cv2.aruco as aruco
 import numpy as np
 
 from chatgpt import AIProcessingDialog
-from image_processing import (auto_white_balance, calculate_marker_rotation,
-                              correct_rotation, draw_debug_grid,
-                              perspective_transform_from_marker)
+from image_processing import (
+    auto_white_balance,
+    calculate_marker_rotation,
+    correct_rotation,
+    draw_debug_grid,
+    perspective_transform_from_marker,
+)
 from ocr_worker import YomiTokuWorker
+
 # Import from local modules
 from ui_components import SubjectSettingsDialog, ToastNotification
 
@@ -325,7 +330,9 @@ class CameraWindow(QtWidgets.QMainWindow):
                 with open(self.settings_file, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
-                QtWidgets.QMessageBox.warning(self, "警告", f"設定ファイルの読み込みに失敗しました: {e}")
+                QtWidgets.QMessageBox.warning(
+                    self, "警告", f"設定ファイルの読み込みに失敗しました: {e}"
+                )
                 return {}
         return {}
 
@@ -336,7 +343,9 @@ class CameraWindow(QtWidgets.QMainWindow):
                 json.dump(self.subject_mappings, f, ensure_ascii=False, indent=2)
             return True
         except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "エラー", f"設定ファイルの保存に失敗しました: {e}")
+            QtWidgets.QMessageBox.critical(
+                self, "エラー", f"設定ファイルの保存に失敗しました: {e}"
+            )
             return False
 
     def open_subject_settings(self):
@@ -345,7 +354,6 @@ class CameraWindow(QtWidgets.QMainWindow):
         if dialog.exec() == QtWidgets.QDialog.Accepted:
             self.subject_mappings = dialog.get_mappings()
             if self.save_subject_mappings():
-                # トースト通知で保存完了を表示（2秒後に自動で消える）
                 toast = ToastNotification("教科設定を保存しました", self, duration=4000)
                 toast.show()
 
@@ -521,7 +529,9 @@ class CameraWindow(QtWidgets.QMainWindow):
 
         # マーカーが検出されていない場合
         if ids is None or len(ids) == 0:
-            QtWidgets.QMessageBox.warning(self, "警告", "ArUcoマーカーが検出されていません。")
+            QtWidgets.QMessageBox.warning(
+                self, "警告", "ArUcoマーカーが検出されていません。"
+            )
             return
 
         # 最初に検出されたマーカーIDを使用
@@ -727,10 +737,11 @@ class CameraWindow(QtWidgets.QMainWindow):
             # Store the paused display frame
             self.paused_display_frame = corrected_frame.copy()
 
-        # トースト通知で保存完了を表示（2秒後に自動で消える）
         perspective_info = "\n台形補正: 適用" if perspective_applied else ""
         rotation_info = (
-            f"\n回転補正: {rotation_applied:.1f}度" if abs(rotation_applied) >= 1.0 else ""
+            f"\n回転補正: {rotation_applied:.1f}度"
+            if abs(rotation_applied) >= 1.0
+            else ""
         )
         toast_msg = f"教科: {subject_name}\nマーカーID: {marker_id}{perspective_info}{rotation_info}\n保存完了"
         toast = ToastNotification(toast_msg, self, duration=4000)
@@ -838,7 +849,9 @@ def main():
         win = CameraWindow(debug_mode=debug_mode)
     except Exception as e:
         # show a message box and quit cleanly
-        QtWidgets.QMessageBox.critical(None, "起動エラー", f"アプリケーションを開始できませんでした:\n{e}")
+        QtWidgets.QMessageBox.critical(
+            None, "起動エラー", f"アプリケーションを開始できませんでした:\n{e}"
+        )
         sys.exit(1)
 
     if debug_mode:
