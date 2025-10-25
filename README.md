@@ -14,6 +14,12 @@
   - ホワイトバランス自動調整（6×6グリッド解析）
   - 回転補正（マーカーの傾きを検出して自動補正）
 - **OCR機能**: 撮影した画像からテキストを抽出（日本語・英語対応）
+- **AI学習支援機能**:
+-   📝 要約: テキストの重要ポイントを箇条書きで整理
+    ❓ 練習問題作成: 内容に基づいた学習問題を3問生成
+    💡 概念説明: 専門用語を分かりやすく解説
+    📅 学習計画: 効果的な学習スケジュールを提案
+
 
 ## 使い方
 
@@ -51,6 +57,25 @@ brew install tesseract tesseract-lang
 
 **Windows:**
 [Tesseract公式ページ](https://github.com/UB-Mannheim/tesseract/wiki)からインストーラーをダウンロード
+
+4.AI学習支援環境のセットアップ
+Ollamaのインストール:
+```bash
+curl -fsSL https://ollama.com/install.sh | sh￥
+```
+AIモデルのダウンロード:
+```bash
+# 軽量な日本語対応モデル（約1.6GB）
+ollama pull gemma2:2b
+
+# より高性能なモデル（約4.1GB、推奨）
+ollama pull gemma2:9b
+```
+
+ローカルAI用Pythonライブラリ:
+```bash
+pip install requests
+```
 
 ### 起動方法
 
