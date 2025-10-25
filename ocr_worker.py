@@ -25,7 +25,7 @@ class OCRWorker(QtCore.QThread):
         super().__init__(parent)
         # BGR フレームを受け取る場合はコピーして保持する
         # もしくは保存済みファイルのパスを受け取る
-        self.frame = frame.copy() if frame is not None else None
+        self.frame = frame.copy( ) if frame is not None else None
         self.image_path = image_path
 
     def run(self):
