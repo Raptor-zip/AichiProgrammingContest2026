@@ -1,42 +1,40 @@
+import json
 import os
 import sys
-import json
+
 import requests
 
 # Ensure Qt uses PySide6's plugins rather than OpenCV's bundled plugins which can cause
 # "Could not load the Qt platform plugin 'xcb'" errors. We set QT_PLUGIN_PATH to PySide6
 # package plugins directory when possible.
 try:
-    from PySide6 import QtCore, QtWidgets, QtGui
     import PySide6
+    from PySide6 import QtCore, QtGui, QtWidgets
+
     pyside_pkg_dir = os.path.dirname(PySide6.__file__)
-    pyside_plugins = os.path.join(pyside_pkg_dir, 'plugins')
+    pyside_plugins = os.path.join(pyside_pkg_dir, "plugins")
     # Prepend to QT_PLUGIN_PATH so Qt finds PySide6 plugins first
-    existing = os.environ.get('QT_PLUGIN_PATH', '')
+    existing = os.environ.get("QT_PLUGIN_PATH", "")
     if pyside_plugins and pyside_plugins not in existing:
-        os.environ['QT_PLUGIN_PATH'] = pyside_plugins + \
-            (os.pathsep + existing if existing else '')
+        os.environ["QT_PLUGIN_PATH"] = pyside_plugins + (
+            os.pathsep + existing if existing else ""
+        )
 except Exception:
     # If PySide6 import fails, re-raise so the error is visible
     raise
+from datetime import datetime
+
 import cv2
 import cv2.aruco as aruco
 import numpy as np
-from datetime import datetime
-from yomitoku import DocumentAnalyzer
-# from yomitoku.data.functions import load_pdf
 
-# Import from local modules
-from ui_components import ToastNotification, SubjectSettingsDialog
-from ocr_worker import OCRWorker
-from image_processing import (
-    auto_white_balance,
-    calculate_marker_rotation,
-    correct_rotation,
-    draw_debug_grid,
-    perspective_transform_from_marker
-)
 from chatgpt import AIProcessingDialog
+from image_processing import (auto_white_balance, calculate_marker_rotation,
+                              correct_rotation, draw_debug_grid,
+                              perspective_transform_from_marker)
+from ocr_worker import YomiTokuWorker
+# Import from local modules
+from ui_components import SubjectSettingsDialog, ToastNotification
 
 
 class CameraWindow(QtWidgets.QMainWindow):
@@ -46,12 +44,13 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.resize(1200, 800)
 
         # ウィンドウアイコンを設定
-        icon_path = os.path.join(os.path.dirname(__file__), 'icon.png')
+        icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QtGui.QIcon(icon_path))
 
         # モダンなデザインのスタイルシートを適用
-        self.setStyleSheet("""
+        self.setStyleSheet(
+            """
             QMainWindow {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #1a1a2e, stop:1 #16213e);
@@ -145,17 +144,20 @@ class CameraWindow(QtWidgets.QMainWindow):
             QTextEdit:focus {
                 border: 2px solid #6b4397;
             }
-        """)
+        """
+        )
 
         # デバッグモード
         self.debug_mode = debug_mode
 
         # captures directory
-        self.captures_dir = os.path.join(os.path.dirname(__file__), 'captures')
+        self.captures_dir = os.path.join(os.path.dirname(__file__), "captures")
         os.makedirs(self.captures_dir, exist_ok=True)
 
         # subject mappings JSON file
-        self.settings_file = os.path.join(os.path.dirname(__file__), 'subject_mappings.json')
+        self.settings_file = os.path.join(
+            os.path.dirname(__file__), "subject_mappings.json"
+        )
         self.subject_mappings = self.load_subject_mappings()
 
         # Video capture: try network MJPEG stream first, but verify we can actually read a frame.
@@ -177,16 +179,19 @@ class CameraWindow(QtWidgets.QMainWindow):
             return None
 
         self.cap = try_open_capture("http://192.168.110.102:8080/video", tries=3)
-        self.cap_type = 'network'
+        self.cap_type = "network"
         if self.cap is None:
             # try the default local camera
             self.cap = try_open_capture(0, tries=3)
-            self.cap_type = 'local'
+            self.cap_type = "local"
 
         if self.cap is None:
             # show a user-friendly error and stop initialization
             QtWidgets.QMessageBox.critical(
-                self, "エラー", "カメラを開くことができませんでした。ネットワークカメラとローカルカメラの両方を確認してください。")
+                self,
+                "エラー",
+                "カメラを開くことができませんでした。ネットワークカメラとローカルカメラの両方を確認してください。",
+            )
             # raise an exception so caller can handle it (or exit in main)
             raise RuntimeError("Failed to open any camera source")
 
@@ -262,7 +267,8 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.white_balance_enabled = True
 
         spacer = QtWidgets.QSpacerItem(
-            40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
+            40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum
+        )
         controls.addItem(spacer)
 
         # AI処理ボタンを追加
@@ -316,23 +322,21 @@ class CameraWindow(QtWidgets.QMainWindow):
         """JSONファイルから教科マッピングを読み込む"""
         if os.path.exists(self.settings_file):
             try:
-                with open(self.settings_file, 'r', encoding='utf-8') as f:
+                with open(self.settings_file, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
-                QtWidgets.QMessageBox.warning(
-                    self, "警告", f"設定ファイルの読み込みに失敗しました: {e}")
+                QtWidgets.QMessageBox.warning(self, "警告", f"設定ファイルの読み込みに失敗しました: {e}")
                 return {}
         return {}
 
     def save_subject_mappings(self):
         """教科マッピングをJSONファイルに保存"""
         try:
-            with open(self.settings_file, 'w', encoding='utf-8') as f:
+            with open(self.settings_file, "w", encoding="utf-8") as f:
                 json.dump(self.subject_mappings, f, ensure_ascii=False, indent=2)
             return True
         except Exception as e:
-            QtWidgets.QMessageBox.critical(
-                self, "エラー", f"設定ファイルの保存に失敗しました: {e}")
+            QtWidgets.QMessageBox.critical(self, "エラー", f"設定ファイルの保存に失敗しました: {e}")
             return False
 
     def open_subject_settings(self):
@@ -392,8 +396,9 @@ class CameraWindow(QtWidgets.QMainWindow):
                 rgb = cv2.cvtColor(self.paused_display_frame, cv2.COLOR_BGR2RGB)
                 h, w, ch = rgb.shape
                 bytes_per_line = ch * w
-                qimg = QtGui.QImage(rgb.data, w, h, bytes_per_line,
-                                    QtGui.QImage.Format_RGB888)
+                qimg = QtGui.QImage(
+                    rgb.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888
+                )
                 pix = QtGui.QPixmap.fromImage(qimg)
                 pix = pix.scaled(self.video_label.size(), QtCore.Qt.KeepAspectRatio)
                 self.video_label.setPixmap(pix)
@@ -410,7 +415,9 @@ class CameraWindow(QtWidgets.QMainWindow):
             # image area used for normalization
             img_h, img_w = frame.shape[:2]
             img_area = float(img_h * img_w)
-            for ci, cid in zip(corners, ids.flatten() if hasattr(ids, 'flatten') else ids):
+            for ci, cid in zip(
+                corners, ids.flatten() if hasattr(ids, "flatten") else ids
+            ):
                 # corners の形状は (1,4,2) や (4,2) のことがある
                 pts = None
                 try:
@@ -429,7 +436,10 @@ class CameraWindow(QtWidgets.QMainWindow):
 
                 # 単純な信頼度判定: 面積が十分であり（画面に対して小さすぎない）、
                 # バウンディング矩形に比較してポリゴンが極端に細長/歪んでいないこと
-                if area_ratio >= self.aruco_area_ratio_threshold and fill_ratio >= self.aruco_fill_threshold:
+                if (
+                    area_ratio >= self.aruco_area_ratio_threshold
+                    and fill_ratio >= self.aruco_fill_threshold
+                ):
                     filtered_corners.append(pts.reshape(1, -1, 2))
                     filtered_ids.append([cid])
 
@@ -439,8 +449,9 @@ class CameraWindow(QtWidgets.QMainWindow):
             # 表示用に OpenCV の drawDetectedMarkers が期待する形に戻す
             try:
                 fc = [c.astype(float) for c in filtered_corners]
-                fid = cv2.UMat(cv2.UMat(np.array(filtered_ids))
-                               ).get() if False else None
+                fid = (
+                    cv2.UMat(cv2.UMat(np.array(filtered_ids))).get() if False else None
+                )
             except Exception:
                 # 最小限: use filtered_corners and filtered_ids directly
                 pass
@@ -448,7 +459,8 @@ class CameraWindow(QtWidgets.QMainWindow):
             try:
                 # filtered_corners は list of (1,4,2) になっているのでそのまま渡す
                 aruco.drawDetectedMarkers(
-                    frame, filtered_corners, np.array(filtered_ids))
+                    frame, filtered_corners, np.array(filtered_ids)
+                )
             except Exception:
                 # fallback: draw original markers for visualization if conversion fails
                 try:
@@ -476,15 +488,14 @@ class CameraWindow(QtWidgets.QMainWindow):
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
         bytes_per_line = ch * w
-        qimg = QtGui.QImage(rgb.data, w, h, bytes_per_line,
-                            QtGui.QImage.Format_RGB888)
+        qimg = QtGui.QImage(rgb.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
         pix = QtGui.QPixmap.fromImage(qimg)
         # scale to label size
         pix = pix.scaled(self.video_label.size(), QtCore.Qt.KeepAspectRatio)
         self.video_label.setPixmap(pix)
 
     def take_picture(self):
-        if self.cap_type == 'network':
+        if self.cap_type == "network":
             url = "http://192.168.110.102:8080/photoaf.jpg"
             response = requests.get(url)
             if response.status_code != 200:
@@ -510,8 +521,7 @@ class CameraWindow(QtWidgets.QMainWindow):
 
         # マーカーが検出されていない場合
         if ids is None or len(ids) == 0:
-            QtWidgets.QMessageBox.warning(
-                self, "警告", "ArUcoマーカーが検出されていません。")
+            QtWidgets.QMessageBox.warning(self, "警告", "ArUcoマーカーが検出されていません。")
             return
 
         # 最初に検出されたマーカーIDを使用
@@ -528,21 +538,32 @@ class CameraWindow(QtWidgets.QMainWindow):
         os.makedirs(subject_dir, exist_ok=True)
 
         # タイムスタンプを生成（全てのファイルで共通）
-        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # ステップ0: 元の画像を保存（デバッグモード）
         if self.debug_mode:
-            original_filename = os.path.join(subject_dir, f'capture_{ts}_0_original.jpg')
+            original_filename = os.path.join(
+                subject_dir, f"capture_{ts}_0_original.jpg"
+            )
             cv2.imwrite(original_filename, self.current_frame)
 
         # ステップ1: 台形補正（透視変換）を適用
         # マーカーの四隅の座標から画像全体を正面から見た状態に変換
-        perspective_frame, transform_matrix, output_size, corner_coords = perspective_transform_from_marker(
-            self.current_frame, corners, marker_size_mm=80, output_dpi=300
+        (
+            perspective_frame,
+            transform_matrix,
+            output_size,
+            corner_coords,
+        ) = perspective_transform_from_marker(
+            self.current_frame, corners, marker_size_mm=80, output_dpi=200
         )
 
         # perspective_frameのサイズをprintする
-        print(f"Perspective transformed frame size: {perspective_frame.shape[1]}x{perspective_frame.shape[0]}" if perspective_frame is not None else "Perspective transform failed.")
+        print(
+            f"Perspective transformed frame size: {perspective_frame.shape[1]}x{perspective_frame.shape[0]}"
+            if perspective_frame is not None
+            else "Perspective transform failed."
+        )
         print(f"corner coords: {corner_coords}")
 
         # 台形補正が成功した場合はその画像を使用、失敗した場合は元の画像を使用
@@ -551,7 +572,9 @@ class CameraWindow(QtWidgets.QMainWindow):
             perspective_applied = True
             # デバッグモード: 台形補正後の画像を保存
             if self.debug_mode:
-                perspective_filename = os.path.join(subject_dir, f'capture_{ts}_1_perspective.jpg')
+                perspective_filename = os.path.join(
+                    subject_dir, f"capture_{ts}_1_perspective.jpg"
+                )
                 cv2.imwrite(perspective_filename, perspective_frame)
         else:
             processing_frame = self.current_frame.copy()
@@ -567,7 +590,9 @@ class CameraWindow(QtWidgets.QMainWindow):
         edges = cv2.Canny(blur, 50, 150)
 
         # 輪郭検出
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(
+            edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
         contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
         paper_corners = None
@@ -583,12 +608,14 @@ class CameraWindow(QtWidgets.QMainWindow):
             # 線を描く
             cv2.polylines(overlay, [pts], isClosed=True, color=(0, 255, 0), thickness=3)
             # 四隅に小さい円を描画
-            for (x, y) in pts:
+            for x, y in pts:
                 cv2.circle(overlay, (int(x), int(y)), 6, (0, 255, 0), -1)
 
         # ハフ変換で直線検出
         try:
-            lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=160, minLineLength=240, maxLineGap=30)
+            lines = cv2.HoughLinesP(
+                edges, 1, np.pi / 180, threshold=160, minLineLength=240, maxLineGap=30
+            )
         except Exception:
             lines = None
 
@@ -619,13 +646,15 @@ class CameraWindow(QtWidgets.QMainWindow):
 
         # デバッグモード: 検出結果（四角 + 直線）を保存
         if self.debug_mode:
-            detected_filename = os.path.join(subject_dir, f'capture_{ts}_2_detected.jpg')
+            detected_filename = os.path.join(
+                subject_dir, f"capture_{ts}_2_detected.jpg"
+            )
             cv2.imwrite(detected_filename, overlay)
 
         # 描画入りの画像をそのまま次ステップに渡す（トリミングはしない）
         processing_frame = overlay
 
-    # ステップ3: 回転補正を実行（トリミング後の画像に対して）
+        # ステップ3: 回転補正を実行（トリミング後の画像に対して）
         # トリミング後の画像でマーカーを再検出
         gray_trimmed = cv2.cvtColor(processing_frame, cv2.COLOR_BGR2GRAY)
         corners_trimmed, ids_trimmed, _ = self.detector.detectMarkers(gray_trimmed)
@@ -633,14 +662,15 @@ class CameraWindow(QtWidgets.QMainWindow):
         if corners_trimmed is not None and len(corners_trimmed) > 0:
             marker_angle = calculate_marker_rotation(corners_trimmed)
             rotated_frame, rotation_applied = correct_rotation(
-                processing_frame, marker_angle)
+                processing_frame, marker_angle
+            )
         else:
             # マーカーが検出できない場合は回転補正をスキップ
             rotated_frame = processing_frame
             rotation_applied = 0.0
 
         if self.debug_mode:
-            rotated_filename = os.path.join(subject_dir, f'capture_{ts}_3_rotated.jpg')
+            rotated_filename = os.path.join(subject_dir, f"capture_{ts}_3_rotated.jpg")
             cv2.imwrite(rotated_filename, rotated_frame)
 
         # ステップ4: 回転後の画像に対してホワイトバランス補正を適用
@@ -650,7 +680,9 @@ class CameraWindow(QtWidgets.QMainWindow):
             corners_rotated, ids_rotated, _ = self.detector.detectMarkers(gray_rotated)
 
             if corners_rotated is not None and len(corners_rotated) > 0:
-                corrected_frame, viz_info, white_bgr, black_bgr = auto_white_balance(rotated_frame, corners_rotated)
+                corrected_frame, viz_info, white_bgr, black_bgr = auto_white_balance(
+                    rotated_frame, corners_rotated
+                )
             else:
                 # マーカーが検出できない場合は回転後の画像をそのまま使用
                 corrected_frame = rotated_frame
@@ -660,17 +692,17 @@ class CameraWindow(QtWidgets.QMainWindow):
             viz_info, white_bgr, black_bgr = None, None, None
 
         if self.debug_mode:
-            wb_filename = os.path.join(subject_dir, f'capture_{ts}_4_white_balance.jpg')
+            wb_filename = os.path.join(subject_dir, f"capture_{ts}_4_white_balance.jpg")
             cv2.imwrite(wb_filename, corrected_frame)
 
         # ファイル名を生成して最終画像を保存
-        filename = os.path.join(subject_dir, f'capture_{ts}.png')
+        filename = os.path.join(subject_dir, f"capture_{ts}.png")
         cv2.imwrite(filename, corrected_frame)
 
         # デバッグモードの場合、グリッド付きの画像も保存
         if self.debug_mode and viz_info is not None:
             debug_frame = draw_debug_grid(corrected_frame, viz_info)
-            debug_filename = os.path.join(subject_dir, f'capture_{ts}_5_grid.png')
+            debug_filename = os.path.join(subject_dir, f"capture_{ts}_5_grid.png")
             cv2.imwrite(debug_filename, debug_frame)
 
         # show the saved image in the video_label
@@ -678,8 +710,7 @@ class CameraWindow(QtWidgets.QMainWindow):
             # load with QImage for display
             image = QtGui.QImage(filename)
             pix = QtGui.QPixmap.fromImage(image)
-            pix = pix.scaled(self.video_label.size(),
-                             QtCore.Qt.KeepAspectRatio)
+            pix = pix.scaled(self.video_label.size(), QtCore.Qt.KeepAspectRatio)
             self.video_label.setPixmap(pix)
             # Store the paused display frame
             self.paused_display_frame = corrected_frame.copy()
@@ -687,115 +718,93 @@ class CameraWindow(QtWidgets.QMainWindow):
             rgb = cv2.cvtColor(corrected_frame, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb.shape
             bytes_per_line = ch * w
-            qimg = QtGui.QImage(rgb.data, w, h, bytes_per_line,
-                                QtGui.QImage.Format_RGB888)
+            qimg = QtGui.QImage(
+                rgb.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888
+            )
             pix = QtGui.QPixmap.fromImage(qimg)
-            pix = pix.scaled(self.video_label.size(),
-                             QtCore.Qt.KeepAspectRatio)
+            pix = pix.scaled(self.video_label.size(), QtCore.Qt.KeepAspectRatio)
             self.video_label.setPixmap(pix)
             # Store the paused display frame
             self.paused_display_frame = corrected_frame.copy()
 
         # トースト通知で保存完了を表示（2秒後に自動で消える）
         perspective_info = "\n台形補正: 適用" if perspective_applied else ""
-        rotation_info = f"\n回転補正: {rotation_applied:.1f}度" if abs(rotation_applied) >= 1.0 else ""
+        rotation_info = (
+            f"\n回転補正: {rotation_applied:.1f}度" if abs(rotation_applied) >= 1.0 else ""
+        )
         toast_msg = f"教科: {subject_name}\nマーカーID: {marker_id}{perspective_info}{rotation_info}\n保存完了"
         toast = ToastNotification(toast_msg, self, duration=4000)
         toast.show()
 
-        # DocumentAnalyzer may raise if CUDA isn't available. Try CUDA first and
-        # fall back to CPU to avoid crashing on systems without GPU support.
-        try:
-            analyzer = DocumentAnalyzer(visualize=True, device="cuda")
-        except Exception:
-            try:
-                analyzer = DocumentAnalyzer(visualize=True, device="cpu")
-            except Exception:
-                analyzer = None
+        # YomiTokuの処理を非同期で実行
+        # タイムスタンプと教科ディレクトリを保存して、ワーカー完了時に使用
+        self.current_ts = ts
+        self.current_subject_dir = subject_dir
+        self.current_corrected_frame = corrected_frame.copy()
 
-        if analyzer is not None:
-            try:
-                results, ocr_vis, layout_vis = analyzer(corrected_frame)
-            except Exception as e:
-                print(f"Warning: DocumentAnalyzer failed: {e}")
-                results, ocr_vis, layout_vis = None, None, None
-        else:
-            print("Warning: DocumentAnalyzer unavailable (both CUDA and CPU fallback failed). Skipping document analysis.")
-            results, ocr_vis, layout_vis = None, None, None
+        yomitoku_worker = YomiTokuWorker(frame=corrected_frame, parent=self)
+        yomitoku_worker.finished.connect(self.on_yomitoku_result)
+        yomitoku_worker.error.connect(self.on_yomitoku_error)
+        yomitoku_worker.start()
 
-        # HTML形式で解析結果をエクスポート（analyzer が成功した場合のみ）
+        # pause camera feed by setting a flag instead of stopping timer
+        # stopping/starting the timer causes MJPEG stream sync issues
+        self.camera_paused = True
+
+    def on_yomitoku_result(self, results, ocr_vis, layout_vis):
+        """YomiTokuの処理が完了した時のコールバック"""
+        ts = self.current_ts
+        subject_dir = self.current_subject_dir
+        corrected_frame = self.current_corrected_frame
+
+        # HTML形式で解析結果をエクスポート（results が存在する場合のみ）
         if results is not None:
             try:
-                results.to_html(f"output_.html", img=corrected_frame)
+                html_filename = os.path.join(subject_dir, f"capture_{ts}_analysis.html")
+                results.to_html(html_filename, img=corrected_frame)
+                md_filename = os.path.join(subject_dir, f"capture_{ts}_analysis.md")
+                test = results.to_markdown(md_filename, img=corrected_frame)
+                self.last_ocr_text = test
             except Exception as e:
                 print(f"Warning: failed to export analysis to HTML: {e}")
 
         # 可視化画像を保存（存在する場合のみ）
         if ocr_vis is not None:
             try:
-                ocr_filename = os.path.join(subject_dir, f'capture_{ts}_ocr_vis.jpg')
+                ocr_filename = os.path.join(subject_dir, f"capture_{ts}_ocr_vis.jpg")
                 cv2.imwrite(ocr_filename, ocr_vis)
             except Exception as e:
                 print(f"Warning: failed to save ocr_vis: {e}")
         if layout_vis is not None:
             try:
-                layout_filename = os.path.join(subject_dir, f'capture_{ts}_layout_vis.jpg')
+                layout_filename = os.path.join(
+                    subject_dir, f"capture_{ts}_layout_vis.jpg"
+                )
                 cv2.imwrite(layout_filename, layout_vis)
             except Exception as e:
                 print(f"Warning: failed to save layout_vis: {e}")
 
-        # run OCR on the saved image (in background)
-        worker = OCRWorker(frame=None, image_path=filename, parent=self)
-        worker.finished.connect(self.on_ocr_result)
-        worker.start()
+        if self.last_ocr_text.strip():  # テキストが空でない場合のみ有効化
+            self.ai_process_btn.setEnabled(True)
+        else:
+            self.ai_process_btn.setEnabled(False)
 
-        # pause camera feed by setting a flag instead of stopping timer
-        # stopping/starting the timer causes MJPEG stream sync issues
-        self.camera_paused = True
-
-    def run_ocr(self):
-        # Run OCR on the currently displayed frame (prefers current_frame if camera is active)
-        if self.current_frame is not None and not self.camera_paused:
-            src_frame = self.current_frame.copy()
-            worker = OCRWorker(frame=src_frame, parent=self)
-            worker.finished.connect(self.on_ocr_result)
-            worker.start()
-            return
-
-        # If camera is paused (showing a saved image), we don't have current_frame to use.
-        # In that case, attempt to OCR the last saved file if available by checking captures dir.
-        files = sorted([f for f in os.listdir(self.captures_dir)
-                       if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
-        if not files:
-            QtWidgets.QMessageBox.information(
-                self, "OCR", "No captured image to run OCR on.")
-            return
-        latest = os.path.join(self.captures_dir, files[-1])
-        worker = OCRWorker(image_path=latest, parent=self)
-        worker.finished.connect(self.on_ocr_result)
-        worker.start()
+    def on_yomitoku_error(self, error_msg):
+        """YomiTokuの処理でエラーが発生した時のコールバック"""
+        print(f"Warning: YomiToku processing failed: {error_msg}")
 
     def resume_camera(self):
         # resume live feed by clearing the paused flag
         self.camera_paused = False
         self.paused_display_frame = None
 
-    def on_ocr_result(self, text):
-        self.ocr_output.append(
-            f"[{datetime.now().strftime('%H:%M:%S')}] {text}")
-
-        # OCR結果を保存してAI処理ボタンを有効化
-        self.last_ocr_text = text
-        if text.strip():  # テキストが空でない場合のみ有効化
-            self.ai_process_btn.setEnabled(True)
-        else:
-            self.ai_process_btn.setEnabled(False)
-
     def open_ai_processing(self):
         """AI処理ダイアログを開く"""
         if not self.last_ocr_text.strip():
             QtWidgets.QMessageBox.information(
-                self, "情報", "処理するテキストがありません。\n先に画像を撮影してOCRを実行してください。"
+                self,
+                "情報",
+                "処理するテキストがありません。\n先に画像を撮影してOCRを実行してください。",
             )
             return
 
@@ -806,7 +815,7 @@ class CameraWindow(QtWidgets.QMainWindow):
     def closeEvent(self, event):
         self.timer.stop()
         # stop ocr timer if present (older versions may have created it)
-        if getattr(self, 'ocr_timer', None):
+        if getattr(self, "ocr_timer", None):
             try:
                 self.ocr_timer.stop()
             except Exception:
@@ -823,7 +832,7 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
 
     # コマンドライン引数からデバッグモードを取得
-    debug_mode = '--debug' in sys.argv or '-d' in sys.argv
+    debug_mode = "--debug" in sys.argv or "-d" in sys.argv
 
     try:
         win = CameraWindow(debug_mode=debug_mode)
@@ -839,5 +848,5 @@ def main():
     sys.exit(app.exec())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

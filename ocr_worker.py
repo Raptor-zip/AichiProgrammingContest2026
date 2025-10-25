@@ -7,26 +7,42 @@ from PIL import Image
 from PySide6 import QtCore
 
 
-class OCRWorker(QtCore.QThread):
-    """
-    OCR をバックグラウンドで実行するためのスレッドクラス。
-    UI スレッドをブロックしないように、QThread を継承して OCR を行い、完了時に
-    `finished` シグナルで結果の文字列を送出します。
+class YomiTokuWorker(QtCore.QThread):
+    """YomiToku DocumentAnalyzerを非同期実行するワーカー"""
 
-    コンストラクタは以下を受け付けます:
-      - frame: OpenCV の BGR numpy 配列（カメラのフレーム）
-      - image_path: ファイルパスから読み込む場合はそのパス
-    frame と image_path のどちらかが指定されていれば動作します。
-    """
-    finished = QtCore.Signal(str)
+    finished = QtCore.Signal(object, object, object)  # results, ocr_vis, layout_vis
+    error = QtCore.Signal(str)
 
-    def __init__(self, frame=None, image_path=None, parent=None):
+    def __init__(self, frame, parent=None):
         super().__init__(parent)
-        # BGR フレームを受け取る場合はコピーして保持する
-        # もしくは保存済みファイルのパスを受け取る
         self.frame = frame.copy() if frame is not None else None
-        self.image_path = image_path
 
     def run(self):
-        # 結果をシグナルで送出して UI スレッド側で受け取れるようにする
-        self.finished.emit("")
+        if self.frame is None:
+            self.error.emit("フレームがありません")
+            return
+
+        try:
+            from yomitoku import DocumentAnalyzer
+
+            # Try CUDA first, fallback to CPU
+            analyzer = None
+            try:
+                analyzer = DocumentAnalyzer(visualize=True, device="cuda")
+            except Exception:
+                try:
+                    analyzer = DocumentAnalyzer(visualize=True, device="cpu")
+                except Exception as e:
+                    self.error.emit(f"DocumentAnalyzerの初期化に失敗: {e}")
+                    return
+
+            if analyzer is not None:
+                try:
+                    results, ocr_vis, layout_vis = analyzer(self.frame)
+                    self.finished.emit(results, ocr_vis, layout_vis)
+                except Exception as e:
+                    self.error.emit(f"DocumentAnalyzerの実行に失敗: {e}")
+            else:
+                self.error.emit("DocumentAnalyzerが利用できません")
+        except Exception as e:
+            self.error.emit(f"予期しないエラー: {e}")

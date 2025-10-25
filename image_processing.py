@@ -45,9 +45,13 @@ def auto_white_balance(image, corners):
 
     # グリッド情報を保存（描画用）
     grid_info = {
-        'x': x, 'y': y, 'w': w, 'h': h,
-        'grid_size': grid_size,
-        'cell_w': cell_w, 'cell_h': cell_h
+        "x": x,
+        "y": y,
+        "w": w,
+        "h": h,
+        "grid_size": grid_size,
+        "cell_w": cell_w,
+        "cell_h": cell_h,
     }
 
     # 各グリッドセルを解析
@@ -101,17 +105,21 @@ def auto_white_balance(image, corners):
     if num_white_pixels == 0 or num_black_pixels == 0:
         return image, None, None, None
 
-    white_bgr = np.array([
-        np.median(white_samples[0::3]),  # B
-        np.median(white_samples[1::3]),  # G
-        np.median(white_samples[2::3])   # R
-    ])
+    white_bgr = np.array(
+        [
+            np.median(white_samples[0::3]),  # B
+            np.median(white_samples[1::3]),  # G
+            np.median(white_samples[2::3]),  # R
+        ]
+    )
 
-    black_bgr = np.array([
-        np.median(black_samples[0::3]),  # B
-        np.median(black_samples[1::3]),  # G
-        np.median(black_samples[2::3])   # R
-    ])
+    black_bgr = np.array(
+        [
+            np.median(black_samples[0::3]),  # B
+            np.median(black_samples[1::3]),  # G
+            np.median(black_samples[2::3]),  # R
+        ]
+    )
 
     # 線形変換の係数を計算
     # black_bgr → 0、white_bgr → 255 になるように変換
@@ -125,9 +133,9 @@ def auto_white_balance(image, corners):
 
     # 可視化情報をまとめて返す
     viz_info = {
-        'grid': grid_info,
-        'white_cells': white_cells,
-        'black_cells': black_cells
+        "grid": grid_info,
+        "white_cells": white_cells,
+        "black_cells": black_cells,
     }
 
     return corrected, viz_info, white_bgr, black_bgr
@@ -215,10 +223,14 @@ def correct_rotation(image, angle_deg):
     rotation_matrix[1, 2] += (new_h / 2) - center[1]
 
     # 画像を回転
-    rotated = cv2.warpAffine(image, rotation_matrix, (new_w, new_h),
-                             flags=cv2.INTER_LINEAR,
-                             borderMode=cv2.BORDER_CONSTANT,
-                             borderValue=(255, 255, 255))
+    rotated = cv2.warpAffine(
+        image,
+        rotation_matrix,
+        (new_w, new_h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255),
+    )
 
     return rotated, rotation_needed
 
@@ -238,15 +250,15 @@ def draw_debug_grid(image, viz_info):
         return image
 
     debug_frame = image.copy()
-    grid = viz_info['grid']
-    white_cells = viz_info['white_cells']
-    black_cells = viz_info['black_cells']
+    grid = viz_info["grid"]
+    white_cells = viz_info["white_cells"]
+    black_cells = viz_info["black_cells"]
 
     # 6×6グリッド線を描画
-    x, y, w, h = grid['x'], grid['y'], grid['w'], grid['h']
-    grid_size = grid['grid_size']
-    cell_w = grid['cell_w']
-    cell_h = grid['cell_h']
+    x, y, w, h = grid["x"], grid["y"], grid["w"], grid["h"]
+    grid_size = grid["grid_size"]
+    cell_w = grid["cell_w"]
+    cell_h = grid["cell_h"]
 
     # 縦線を描画（緑色、太さ2）
     for i in range(grid_size + 1):
@@ -270,16 +282,34 @@ def draw_debug_grid(image, viz_info):
 
     # 凡例を表示（背景付き）
     legend_y = max(y - 50, 30)  # 画面上端に近すぎないように調整
-    cv2.rectangle(debug_frame, (x - 5, legend_y - 5), (x + 250, legend_y + 50), (0, 0, 0), -1)
-    cv2.putText(debug_frame, f"White: {len(white_cells)} cells",
-               (x, legend_y + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-    cv2.putText(debug_frame, f"Black: {len(black_cells)} cells",
-               (x, legend_y + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+    cv2.rectangle(
+        debug_frame, (x - 5, legend_y - 5), (x + 250, legend_y + 50), (0, 0, 0), -1
+    )
+    cv2.putText(
+        debug_frame,
+        f"White: {len(white_cells)} cells",
+        (x, legend_y + 15),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (0, 255, 255),
+        2,
+    )
+    cv2.putText(
+        debug_frame,
+        f"Black: {len(black_cells)} cells",
+        (x, legend_y + 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (255, 0, 0),
+        2,
+    )
 
     return debug_frame
 
 
-def perspective_transform_from_marker(image, corners, marker_size_mm=50, output_dpi=300, draw_corners=False):
+def perspective_transform_from_marker(
+    image, corners, marker_size_mm=50, output_dpi=300, draw_corners=False
+):
     """
     ArUcoマーカーの四隅の座標を使って透視変換（台形補正）を行う
 
@@ -310,24 +340,24 @@ def perspective_transform_from_marker(image, corners, marker_size_mm=50, output_
 
     # 変換先の座標（正方形のマーカー）
     # 左上、右上、右下、左下の順
-    dst_points = np.array([
-        [0, 0],
-        [marker_size_pixels, 0],
-        [marker_size_pixels, marker_size_pixels],
-        [0, marker_size_pixels]
-    ], dtype=np.float32)
+    dst_points = np.array(
+        [
+            [0, 0],
+            [marker_size_pixels, 0],
+            [marker_size_pixels, marker_size_pixels],
+            [0, marker_size_pixels],
+        ],
+        dtype=np.float32,
+    )
 
     # 透視変換行列を計算
     matrix = cv2.getPerspectiveTransform(src_points, dst_points)
 
     # 画像全体を変換するために、画像の四隅も変換してみる
     h, w = image.shape[:2]
-    image_corners = np.array([
-        [0, 0],
-        [w, 0],
-        [w, h],
-        [0, h]
-    ], dtype=np.float32).reshape(-1, 1, 2)
+    image_corners = np.array(
+        [[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32
+    ).reshape(-1, 1, 2)
 
     # 画像の四隅を変換
     transformed_corners = cv2.perspectiveTransform(image_corners, matrix)
@@ -346,11 +376,9 @@ def perspective_transform_from_marker(image, corners, marker_size_mm=50, output_
     output_height = max_y - min_y
 
     # オフセット行列を作成（負の座標を補正）
-    offset_matrix = np.array([
-        [1, 0, -min_x],
-        [0, 1, -min_y],
-        [0, 0, 1]
-    ], dtype=np.float32)
+    offset_matrix = np.array(
+        [[1, 0, -min_x], [0, 1, -min_y], [0, 0, 1]], dtype=np.float32
+    )
 
     # 最終的な変換行列 = オフセット行列 × 透視変換行列
     final_matrix = offset_matrix @ matrix
@@ -360,20 +388,18 @@ def perspective_transform_from_marker(image, corners, marker_size_mm=50, output_
         image,
         final_matrix,
         (output_width, output_height),
-        flags=cv2.INTER_NEAREST,   # 補間を行わない
+        flags=cv2.INTER_NEAREST,  # 補間を行わない
         borderMode=cv2.BORDER_CONSTANT,
-        borderValue=(255, 255, 255)
+        borderValue=(255, 255, 255),
     )
 
     # 元画像の4隅の座標を計算
     # 画像サイズと一致させるため、外側の境界座標を使用
     h_orig, w_orig = image.shape[:2]
-    original_corners = np.array([
-        [0, 0],              # 左上
-        [w_orig, 0],         # 右上
-        [w_orig, h_orig],    # 右下
-        [0, h_orig]          # 左下
-    ], dtype=np.float32).reshape(-1, 1, 2)
+    original_corners = np.array(
+        [[0, 0], [w_orig, 0], [w_orig, h_orig], [0, h_orig]],  # 左上  # 右上  # 右下  # 左下
+        dtype=np.float32,
+    ).reshape(-1, 1, 2)
 
     # 変換後の座標を計算
     transformed_corner_points = cv2.perspectiveTransform(original_corners, final_matrix)

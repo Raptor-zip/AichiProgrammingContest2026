@@ -11,9 +11,11 @@ class ToastNotification(QtWidgets.QLabel):
     """
     自動的に消えるトースト通知ウィジェット
     """
+
     def __init__(self, message, parent=None, duration=2000):
         super().__init__(message, parent)
-        self.setStyleSheet("""
+        self.setStyleSheet(
+            """
             QLabel {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 rgba(83, 52, 131, 240), stop:1 rgba(233, 69, 96, 240));
@@ -23,7 +25,8 @@ class ToastNotification(QtWidgets.QLabel):
                 font-size: 15px;
                 font-weight: normal;
             }
-        """)
+        """
+        )
         self.setAlignment(QtCore.Qt.AlignCenter)
         self.setWordWrap(True)
         self.setMaximumWidth(450)
@@ -57,13 +60,15 @@ class SubjectSettingsDialog(QtWidgets.QDialog):
     ArUcoマーカーIDと教科名を対応付けて管理するダイアログ。
     テーブル形式でID-教科名のペアを表示・編集し、JSONファイルに保存する。
     """
+
     def __init__(self, current_mappings=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("教科設定")
         self.resize(600, 500)
 
         # モダンなスタイルを適用
-        self.setStyleSheet("""
+        self.setStyleSheet(
+            """
             QDialog {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #1a1a2e, stop:1 #16213e);
@@ -143,7 +148,8 @@ class SubjectSettingsDialog(QtWidgets.QDialog):
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #42A5F5, stop:1 #2196F3);
             }
-        """)
+        """
+        )
 
         # current_mappings は {id: subject_name} の辞書
         self.mappings = current_mappings.copy() if current_mappings else {}
@@ -154,8 +160,7 @@ class SubjectSettingsDialog(QtWidgets.QDialog):
 
         # 説明ラベル
         info_label = QtWidgets.QLabel(
-            "ArUcoマーカーIDと教科名を対応付けます。\n"
-            "追加・編集後、「保存」ボタンで設定を保存してください。"
+            "ArUcoマーカーIDと教科名を対応付けます。\n" "追加・編集後、「保存」ボタンで設定を保存してください。"
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
@@ -207,7 +212,9 @@ class SubjectSettingsDialog(QtWidgets.QDialog):
     def load_table_data(self):
         """現在のマッピングをテーブルに表示"""
         self.table.setRowCount(0)
-        for marker_id, subject in sorted(self.mappings.items(), key=lambda x: int(x[0])):
+        for marker_id, subject in sorted(
+            self.mappings.items(), key=lambda x: int(x[0])
+        ):
             row = self.table.rowCount()
             self.table.insertRow(row)
             self.table.setItem(row, 0, QtWidgets.QTableWidgetItem(str(marker_id)))
