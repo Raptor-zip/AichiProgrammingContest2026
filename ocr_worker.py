@@ -29,4 +29,4 @@ class OCRWorker(QtCore.QThread):
 
     def run(self):
         # 結果をシグナルで送出して UI スレッド側で受け取れるようにする
-        self.finished.emit()
+        self.finished.emit("")
