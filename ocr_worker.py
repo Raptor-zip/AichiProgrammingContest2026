@@ -15,7 +15,7 @@ class YomiTokuWorker(QtCore.QThread):
 
     def __init__(self, frame, parent=None):
         super().__init__(parent)
-        self.frame = frame.copy( ) if frame is not None else None
+        self.frame = frame.copy() if frame is not None else None
 
     def run(self):
         if self.frame is None:
@@ -23,23 +23,29 @@ class YomiTokuWorker(QtCore.QThread):
             return
 
         try:
-            from yomitoku import DocumentAnalyzer
+            from yomitoku import OCR
+
+            # from yomitoku import DocumentAnalyzer
 
             # Try CUDA first, fallback to CPU
             analyzer = None
             try:
-                analyzer = DocumentAnalyzer(visualize=True, device="cuda")
+                # analyzer = DocumentAnalyzer(visualize=True, device="cuda")
+                analyzer = OCR(visualize=True, device="cuda")
             except Exception:
                 try:
-                    analyzer = DocumentAnalyzer(visualize=True, device="cpu")
+                    # analyzer = DocumentAnalyzer(visualize=True, device="cpu")
+                    analyzer = OCR(visualize=True, device="cpu")
                 except Exception as e:
-                    self.error.emit(f"DocumentAnalyzerの初期化に失敗: {e}")
+                    self.error.emit(f"analyzerの初期化に失敗: {e}")
                     return
 
             if analyzer is not None:
                 try:
-                    results, ocr_vis, layout_vis = analyzer(self.frame)
-                    self.finished.emit(results, ocr_vis, layout_vis)
+                    results, ocr_vis = analyzer(self.frame)
+                    self.finished.emit(results, ocr_vis, None)
+                    # results, ocr_vis, layout_vis = analyzer(self.frame)
+                    # self.finished.emit(results, ocr_vis, layout_vis)
                 except Exception as e:
                     self.error.emit(f"DocumentAnalyzerの実行に失敗: {e}")
             else:

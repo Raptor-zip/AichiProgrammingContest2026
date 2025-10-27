@@ -1,8 +1,15 @@
 import json
 import os
 import sys
-
+from datetime import datetime
+from typing import TYPE_CHECKING
+import cv2
+import cv2.aruco as aruco
+import numpy as np
 import requests
+
+if TYPE_CHECKING:
+    import yomitoku.schemas
 
 # Ensure Qt uses PySide6's plugins rather than OpenCV's bundled plugins which can cause
 # "Could not load the Qt platform plugin 'xcb'" errors. We set QT_PLUGIN_PATH to PySide6
@@ -22,13 +29,9 @@ try:
 except Exception:
     # If PySide6 import fails, re-raise so the error is visible
     raise
-from datetime import datetime
-
-import cv2
-import cv2.aruco as aruco
-import numpy as np
 
 from chatgpt import AIProcessingDialog
+from config_loader import get_config
 from image_processing import (
     auto_white_balance,
     calculate_marker_rotation,
@@ -37,16 +40,18 @@ from image_processing import (
     perspective_transform_from_marker,
 )
 from ocr_worker import YomiTokuWorker
-
-# Import from local modules
 from ui_components import SubjectSettingsDialog, ToastNotification
 
 
 class CameraWindow(QtWidgets.QMainWindow):
     def __init__(self, debug_mode=False):
         super().__init__()
+
+        # 設定を読み込む
+        self.config = get_config()
+
         self.setWindowTitle("Aruco + OCR Camera")
-        self.resize(1200,800)
+        self.resize(self.config.get_window_width(), self.config.get_window_height())
 
         # ウィンドウアイコンを設定
         icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
@@ -156,12 +161,14 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.debug_mode = debug_mode
 
         # captures directory
-        self.captures_dir = os.path.join(os.path.dirname(__file__), "captures")
+        self.captures_dir = os.path.join(
+            os.path.dirname(__file__), self.config.get_captures_dir()
+        )
         os.makedirs(self.captures_dir, exist_ok=True)
 
         # subject mappings JSON file
         self.settings_file = os.path.join(
-            os.path.dirname(__file__), "subject_mappings.json"
+            os.path.dirname(__file__), self.config.get_subject_mappings_file()
         )
         self.subject_mappings = self.load_subject_mappings()
 
@@ -183,11 +190,18 @@ class CameraWindow(QtWidgets.QMainWindow):
                 pass
             return None
 
-        self.cap = try_open_capture("http://192.168.110.102:8080/video", tries=3)
+        # 設定からカメラタイプとURLを取得
+        self.cap = try_open_capture(
+            self.config.get_network_video_url(),
+            tries=self.config.get_network_retry_count(),
+        )
         self.cap_type = "network"
         if self.cap is None:
             # try the default local camera
-            self.cap = try_open_capture(0, tries=3)
+            self.cap = try_open_capture(
+                self.config.get_local_device_index(),
+                tries=self.config.get_network_retry_count(),
+            )
             self.cap_type = "local"
 
         if self.cap is None:
@@ -196,33 +210,36 @@ class CameraWindow(QtWidgets.QMainWindow):
                 self,
                 "エラー",
                 "カメラを開くことができませんでした。ネットワークカメラとローカルカメラの両方を確認してください。",
+                QtWidgets.QMessageBox.StandardButton.Ok,
+                QtWidgets.QMessageBox.StandardButton.Ok,
             )
             # raise an exception so caller can handle it (or exit in main)
             raise RuntimeError("Failed to open any camera source")
 
         # Set buffer size to 1 to always get the latest frame and prevent latency buildup
         # This is critical when stream FPS > processing FPS (e.g., 60fps stream with 33fps timer)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, self.config.get_buffer_size())
 
         # self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
         # self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
         # self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 3840)
         # self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 2160)
-
         # self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('H', '2', '6', '4'))
-
         # self.cap.set(cv2.CAP_PROP_FPS, 30)
 
         # ArUco setup
-        self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+        # 設定からArUco辞書タイプを取得
+        dict_type_name = self.config.get_aruco_dict_type()
+        dict_type = getattr(aruco, dict_type_name, aruco.DICT_4X4_50)
+        self.aruco_dict = aruco.getPredefinedDictionary(dict_type)
         params = aruco.DetectorParameters()
         self.detector = aruco.ArucoDetector(self.aruco_dict, params)
 
-        # ArUco 信頼度フィルターの閾値（調整可能）
+        # ArUco 信頼度フィルターの閾値（設定ファイルから読み込み）
         # - aruco_area_ratio_threshold: 画像面積に対するマーカー面積の比率（小さすぎるものを除外）
         # - aruco_fill_threshold: マーカー凸包に対する実際のポリゴン面積の充填率（歪み判定）
-        self.aruco_area_ratio_threshold = 0.001  # 画像面積の割合（例: 0.001 -> 0.1%）
-        self.aruco_fill_threshold = 0.6  # bounding rect に対する面積の充填率
+        self.aruco_area_ratio_threshold = self.config.get_aruco_area_ratio_threshold()
+        self.aruco_fill_threshold = self.config.get_aruco_fill_threshold()
 
         # ----- UI セットアップ -----
         # メインウィジェットとレイアウトを作る
@@ -236,7 +253,10 @@ class CameraWindow(QtWidgets.QMainWindow):
         # カメラ映像を表示する QLabel
         self.video_label = QtWidgets.QLabel()
         # 最小サイズを設定しておく（ウィンドウの縮小で潰れすぎないようにする）
-        self.video_label.setMinimumSize(640, 480)
+        self.video_label.setMinimumSize(
+            self.config.get_video_label_min_width(),
+            self.config.get_video_label_min_height(),
+        )
         self.video_label.setStyleSheet("background-color: black;")
         layout.addWidget(self.video_label)
 
@@ -248,20 +268,23 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.settings_btn = QtWidgets.QPushButton("⚙️ 教科設定")
         self.settings_btn.setObjectName("settingsButton")
         self.settings_btn.clicked.connect(self.open_subject_settings)
-        self.settings_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.settings_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         controls.addWidget(self.settings_btn)
 
         # ホワイトバランス補正トグルボタン
-        self.wb_toggle_btn = QtWidgets.QPushButton("✓ 補正ON")
+        wb_default = self.config.get_white_balance_enabled_by_default()
+        self.wb_toggle_btn = QtWidgets.QPushButton(
+            "補正ON" if wb_default else "補正OFF"
+        )
         self.wb_toggle_btn.setCheckable(True)
-        self.wb_toggle_btn.setChecked(True)
+        self.wb_toggle_btn.setChecked(wb_default)
         self.wb_toggle_btn.clicked.connect(self.toggle_white_balance)
-        self.wb_toggle_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.settings_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         controls.addWidget(self.wb_toggle_btn)
 
         # ArUco 検出をトリガーに自動撮影するための単発タイマー
         # マーカーを検出したらこのタイマーを start して一定時間（capture_delay_ms）後に撮影する
-        self.capture_delay_ms = 800  # ミリ秒
+        self.capture_delay_ms = self.config.get_aruco_auto_capture_delay_ms()
         self.aruco_auto_timer = QtCore.QTimer(self)
         self.aruco_auto_timer.setSingleShot(True)
         self.aruco_auto_timer.timeout.connect(self.take_picture)
@@ -269,18 +292,22 @@ class CameraWindow(QtWidgets.QMainWindow):
         self._last_aruco_detected = False
 
         # ホワイトバランス補正のON/OFF切り替えフラグ
-        self.white_balance_enabled = True
+        self.white_balance_enabled = wb_default
 
         spacer = QtWidgets.QSpacerItem(
-            40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum
+            40,
+            20,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Minimum,
         )
+
         controls.addItem(spacer)
 
         # AI処理ボタンを追加
         self.ai_process_btn = QtWidgets.QPushButton("🤖 AI処理")
         self.ai_process_btn.setObjectName("aiButton")
         self.ai_process_btn.clicked.connect(self.open_ai_processing)
-        self.ai_process_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.ai_process_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.ai_process_btn.setEnabled(False)  # 初期状態では無効
         controls.addWidget(self.ai_process_btn)
 
@@ -288,19 +315,19 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.resume_btn = QtWidgets.QPushButton("📷 撮影再開")
         self.resume_btn.setObjectName("resumeButton")
         self.resume_btn.clicked.connect(self.resume_camera)
-        self.resume_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.resume_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         controls.addWidget(self.resume_btn)
 
         self.quit_btn = QtWidgets.QPushButton("✕ 終了")
         self.quit_btn.setObjectName("quitButton")
         self.quit_btn.clicked.connect(self.close)
-        self.quit_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.quit_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         controls.addWidget(self.quit_btn)
 
         # OCR の結果などを表示するテキスト領域
         self.ocr_output = QtWidgets.QTextEdit()
         self.ocr_output.setReadOnly(True)
-        self.ocr_output.setMaximumHeight(150)
+        self.ocr_output.setMaximumHeight(self.config.get_ocr_output_max_height())
         self.ocr_output.setPlaceholderText("OCR結果がここに表示されます...")
         layout.addWidget(self.ocr_output)
 
@@ -308,7 +335,7 @@ class CameraWindow(QtWidgets.QMainWindow):
         # 大体 30ms ごと（約33fps）で update_frame を呼ぶ
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self.update_frame)
-        self.timer.start(30)  # ~33fps
+        self.timer.start(self.config.get_frame_interval_ms())
 
         # remove automatic OCR timer: OCR should run after taking a picture
         # (the OCR button will still be available for manual runs)
@@ -323,6 +350,8 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.last_ocr_text = ""
         self.last_subject_name = ""
 
+        self.ocr_timer: QtCore.QTimer = QtCore.QTimer(self)
+
     def load_subject_mappings(self):
         """JSONファイルから教科マッピングを読み込む"""
         if os.path.exists(self.settings_file):
@@ -331,7 +360,11 @@ class CameraWindow(QtWidgets.QMainWindow):
                     return json.load(f)
             except Exception as e:
                 QtWidgets.QMessageBox.warning(
-                    self, "警告", f"設定ファイルの読み込みに失敗しました: {e}"
+                    self,
+                    "警告",
+                    f"設定ファイルの読み込みに失敗しました: {e}",
+                    QtWidgets.QMessageBox.StandardButton.Ok,
+                    QtWidgets.QMessageBox.StandardButton.Ok,
                 )
                 return {}
         return {}
@@ -344,14 +377,18 @@ class CameraWindow(QtWidgets.QMainWindow):
             return True
         except Exception as e:
             QtWidgets.QMessageBox.critical(
-                self, "エラー", f"設定ファイルの保存に失敗しました: {e}"
+                self,
+                "エラー",
+                f"設定ファイルの保存に失敗しました: {e}",
+                QtWidgets.QMessageBox.StandardButton.Ok,
+                QtWidgets.QMessageBox.StandardButton.Ok,
             )
             return False
 
     def open_subject_settings(self):
         """教科設定ダイアログを開く"""
         dialog = SubjectSettingsDialog(self.subject_mappings, self)
-        if dialog.exec() == QtWidgets.QDialog.Accepted:
+        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
             self.subject_mappings = dialog.get_mappings()
             if self.save_subject_mappings():
                 toast = ToastNotification("教科設定を保存しました", self, duration=4000)
@@ -374,6 +411,8 @@ class CameraWindow(QtWidgets.QMainWindow):
 
     def update_frame(self):
         try:
+            if self.cap is None:
+                return
             ret, frame = self.cap.read()
             if not ret:
                 return
@@ -405,10 +444,12 @@ class CameraWindow(QtWidgets.QMainWindow):
                 h, w, ch = rgb.shape
                 bytes_per_line = ch * w
                 qimg = QtGui.QImage(
-                    rgb.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888
+                    rgb.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888
                 )
                 pix = QtGui.QPixmap.fromImage(qimg)
-                pix = pix.scaled(self.video_label.size(), QtCore.Qt.KeepAspectRatio)
+                pix = pix.scaled(
+                    self.video_label.size(), QtCore.Qt.AspectRatioMode.KeepAspectRatio
+                )
                 self.video_label.setPixmap(pix)
             return
 
@@ -427,12 +468,7 @@ class CameraWindow(QtWidgets.QMainWindow):
                 corners, ids.flatten() if hasattr(ids, "flatten") else ids
             ):
                 # corners の形状は (1,4,2) や (4,2) のことがある
-                pts = None
-                try:
-                    pts = ci.reshape(-1, 2)
-                except Exception:
-                    # fallback: convert to numpy array
-                    pts = cv2.UMat(ci).get().reshape(-1, 2)
+                pts = ci.reshape(-1, 2)
 
                 # polygon 面積を計算
                 area = abs(cv2.contourArea(pts))
@@ -496,15 +532,19 @@ class CameraWindow(QtWidgets.QMainWindow):
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
         bytes_per_line = ch * w
-        qimg = QtGui.QImage(rgb.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+        qimg = QtGui.QImage(
+            rgb.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888
+        )
         pix = QtGui.QPixmap.fromImage(qimg)
         # scale to label size
-        pix = pix.scaled(self.video_label.size(), QtCore.Qt.KeepAspectRatio)
+        pix = pix.scaled(
+            self.video_label.size(), QtCore.Qt.AspectRatioMode.KeepAspectRatio
+        )
         self.video_label.setPixmap(pix)
 
     def take_picture(self):
         if self.cap_type == "network":
-            url = "http://192.168.110.102:8080/photoaf.jpg"
+            url = self.config.get_network_photo_url()
             response = requests.get(url)
             if response.status_code != 200:
                 print("画像を取得できませんでした")
@@ -530,7 +570,11 @@ class CameraWindow(QtWidgets.QMainWindow):
         # マーカーが検出されていない場合
         if ids is None or len(ids) == 0:
             QtWidgets.QMessageBox.warning(
-                self, "警告", "ArUcoマーカーが検出されていません。"
+                self,
+                "警告",
+                "ArUcoマーカーが検出されていません。",
+                QtWidgets.QMessageBox.StandardButton.Ok,
+                QtWidgets.QMessageBox.StandardButton.Ok,
             )
             return
 
@@ -565,16 +609,11 @@ class CameraWindow(QtWidgets.QMainWindow):
             output_size,
             corner_coords,
         ) = perspective_transform_from_marker(
-            self.current_frame, corners, marker_size_mm=80, output_dpi=200
+            self.current_frame,
+            np.asarray(corners),
+            marker_size_mm=self.config.get_aruco_marker_size_mm(),
+            output_dpi=self.config.get_aruco_output_dpi(),
         )
-
-        # perspective_frameのサイズをprintする
-        print(
-            f"Perspective transformed frame size: {perspective_frame.shape[1]}x{perspective_frame.shape[0]}"
-            if perspective_frame is not None
-            else "Perspective transform failed."
-        )
-        print(f"corner coords: {corner_coords}")
 
         # 台形補正が成功した場合はその画像を使用、失敗した場合は元の画像を使用
         if perspective_frame is not None:
@@ -596,8 +635,11 @@ class CameraWindow(QtWidgets.QMainWindow):
 
         # エッジ検出と輪郭検出による用紙の検出（トリミングは行わない）
         gray_trim = cv2.cvtColor(processing_frame, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray_trim, (5, 5), 0)
-        edges = cv2.Canny(blur, 50, 150)
+        kernel = tuple(self.config.get_gaussian_blur_kernel())
+        blur = cv2.GaussianBlur(gray_trim, kernel, 0)
+        edges = cv2.Canny(
+            blur, self.config.get_canny_threshold1(), self.config.get_canny_threshold2()
+        )
 
         # 輪郭検出
         contours, _ = cv2.findContours(
@@ -624,12 +666,18 @@ class CameraWindow(QtWidgets.QMainWindow):
         # ハフ変換で直線検出
         try:
             lines = cv2.HoughLinesP(
-                edges, 1, np.pi / 180, threshold=160, minLineLength=240, maxLineGap=30
+                edges,
+                1,
+                np.pi / 180,
+                threshold=self.config.get_hough_threshold(),
+                minLineLength=self.config.get_hough_min_line_length(),
+                maxLineGap=self.config.get_hough_max_line_gap(),
             )
         except Exception:
             lines = None
 
         if lines is not None:
+            lines = np.asarray(lines, dtype=np.int32)
             for l in lines:
                 x1, y1, x2, y2 = l[0]
                 # 角度を計算（度単位）。atan2 の結果はラジアン。
@@ -652,7 +700,7 @@ class CameraWindow(QtWidgets.QMainWindow):
                 elif 85.0 <= abs_angle <= 95.0:
                     color = (0, 255, 0)  # 緑
 
-                cv2.line(overlay, (x1, y1), (x2, y2), color, 2)
+                # cv2.line(overlay, (x1, y1), (x2, y2), color, 2)
 
         # デバッグモード: 検出結果（四角 + 直線）を保存
         if self.debug_mode:
@@ -720,7 +768,9 @@ class CameraWindow(QtWidgets.QMainWindow):
             # load with QImage for display
             image = QtGui.QImage(filename)
             pix = QtGui.QPixmap.fromImage(image)
-            pix = pix.scaled(self.video_label.size(), QtCore.Qt.KeepAspectRatio)
+            pix = pix.scaled(
+                self.video_label.size(), QtCore.Qt.AspectRatioMode.KeepAspectRatio
+            )
             self.video_label.setPixmap(pix)
             # Store the paused display frame
             self.paused_display_frame = corrected_frame.copy()
@@ -729,10 +779,12 @@ class CameraWindow(QtWidgets.QMainWindow):
             h, w, ch = rgb.shape
             bytes_per_line = ch * w
             qimg = QtGui.QImage(
-                rgb.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888
+                rgb.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888
             )
             pix = QtGui.QPixmap.fromImage(qimg)
-            pix = pix.scaled(self.video_label.size(), QtCore.Qt.KeepAspectRatio)
+            pix = pix.scaled(
+                self.video_label.size(), QtCore.Qt.AspectRatioMode.KeepAspectRatio
+            )
             self.video_label.setPixmap(pix)
             # Store the paused display frame
             self.paused_display_frame = corrected_frame.copy()
@@ -762,7 +814,9 @@ class CameraWindow(QtWidgets.QMainWindow):
         # stopping/starting the timer causes MJPEG stream sync issues
         self.camera_paused = True
 
-    def on_yomitoku_result(self, results, ocr_vis, layout_vis):
+    def on_yomitoku_result(
+        self, results: "yomitoku.schemas.OCRSchema", ocr_vis, layout_vis
+    ):
         """YomiTokuの処理が完了した時のコールバック"""
         ts = self.current_ts
         subject_dir = self.current_subject_dir
@@ -771,11 +825,17 @@ class CameraWindow(QtWidgets.QMainWindow):
         # HTML形式で解析結果をエクスポート（results が存在する場合のみ）
         if results is not None:
             try:
-                html_filename = os.path.join(subject_dir, f"capture_{ts}_analysis.html")
-                results.to_html(html_filename, img=corrected_frame)
-                md_filename = os.path.join(subject_dir, f"capture_{ts}_analysis.md")
-                test = results.to_markdown(md_filename, img=corrected_frame)
-                self.last_ocr_text = test
+                print(type(results))
+
+                json_filename = os.path.join(subject_dir, f"capture_{ts}_analysis.json")
+
+                results.to_json(json_filename, img=corrected_frame)
+                
+                # wordsから各contentを改行区切りで結合
+                ocr_text = "\n".join(word.content for word in results.words)
+                print(ocr_text)
+                
+                self.last_ocr_text = ocr_text
             except Exception as e:
                 print(f"Warning: failed to export analysis to HTML: {e}")
 
@@ -845,14 +905,7 @@ def main():
     # コマンドライン引数からデバッグモードを取得
     debug_mode = "--debug" in sys.argv or "-d" in sys.argv
 
-    try:
-        win = CameraWindow(debug_mode=debug_mode)
-    except Exception as e:
-        # show a message box and quit cleanly
-        QtWidgets.QMessageBox.critical(
-            None, "起動エラー", f"アプリケーションを開始できませんでした:\n{e}"
-        )
-        sys.exit(1)
+    win = CameraWindow(debug_mode=debug_mode)
 
     if debug_mode:
         print("デバッグモードで起動しました。グリッド付き画像も保存されます。")

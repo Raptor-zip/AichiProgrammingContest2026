@@ -4,7 +4,7 @@ UI関連のコンポーネント
 - 教科設定ダイアログ
 """
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtWidgets, QtGui
 
 
 class ToastNotification(QtWidgets.QLabel):
@@ -27,13 +27,13 @@ class ToastNotification(QtWidgets.QLabel):
             }
         """
         )
-        self.setAlignment(QtCore.Qt.AlignCenter)
+        self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.setWordWrap(True)
         self.setMaximumWidth(450)
         # シャドウエフェクトを追加
         shadow = QtWidgets.QGraphicsDropShadowEffect()
         shadow.setBlurRadius(20)
-        shadow.setColor(QtCore.Qt.black)
+        shadow.setColor(QtGui.QColor("black"))
         shadow.setOffset(0, 4)
         self.setGraphicsEffect(shadow)
 
@@ -160,7 +160,8 @@ class SubjectSettingsDialog(QtWidgets.QDialog):
 
         # 説明ラベル
         info_label = QtWidgets.QLabel(
-            "ArUcoマーカーIDと教科名を対応付けます。\n" "追加・編集後、「保存」ボタンで設定を保存してください。"
+            "ArUcoマーカーIDと教科名を対応付けます。\n"
+            "追加・編集後、「保存」ボタンで設定を保存してください。"
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
@@ -185,26 +186,26 @@ class SubjectSettingsDialog(QtWidgets.QDialog):
         add_btn = QtWidgets.QPushButton("➕ 行を追加")
         add_btn.setObjectName("addButton")
         add_btn.clicked.connect(self.add_row)
-        add_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        add_btn.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
         btn_layout.addWidget(add_btn)
 
         remove_btn = QtWidgets.QPushButton("🗑️ 選択行を削除")
         remove_btn.setObjectName("removeButton")
         remove_btn.clicked.connect(self.remove_row)
-        remove_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        remove_btn.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
         btn_layout.addWidget(remove_btn)
 
         btn_layout.addStretch()
 
         cancel_btn = QtWidgets.QPushButton("キャンセル")
         cancel_btn.clicked.connect(self.reject)
-        cancel_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        cancel_btn.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
         btn_layout.addWidget(cancel_btn)
 
         save_btn = QtWidgets.QPushButton("💾 保存")
         save_btn.setObjectName("saveButton")
         save_btn.clicked.connect(self.save_and_accept)
-        save_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        save_btn.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
         btn_layout.addWidget(save_btn)
 
         layout.addLayout(btn_layout)

@@ -36,7 +36,9 @@ class LocalLLMClient:
 
 要約:
 """
-        return self._send_message(prompt, system_message="あなたは教育コンテンツの要約専門家です。")
+        return self._send_message(
+            prompt, system_message="あなたは教育コンテンツの要約専門家です。"
+        )
 
     def create_practice_problems(self, text):
         """テキストから練習問題を作成する"""
@@ -50,7 +52,8 @@ class LocalLLMClient:
 練習問題:
 """
         return self._send_message(
-            prompt, system_message="あなたは教育問題作成の専門家です。適切な難易度で学習効果の高い問題を作成します。"
+            prompt,
+            system_message="あなたは教育問題作成の専門家です。適切な難易度で学習効果の高い問題を作成します。",
         )
 
     def explain_concepts(self, text):
@@ -65,7 +68,8 @@ class LocalLLMClient:
 説明:
 """
         return self._send_message(
-            prompt, system_message="あなたは教育専門家です。複雑な概念を分かりやすく説明することが得意です。"
+            prompt,
+            system_message="あなたは教育専門家です。複雑な概念を分かりやすく説明することが得意です。",
         )
 
     def create_study_plan(self, text, subject=""):
@@ -80,7 +84,8 @@ class LocalLLMClient:
 学習計画:
 """
         return self._send_message(
-            prompt, system_message="あなたは学習計画の専門家です。効果的で実践的な学習方法を提案します。"
+            prompt,
+            system_message="あなたは学習計画の専門家です。効果的で実践的な学習方法を提案します。",
         )
 
     def _send_message(self, message, system_message=""):
@@ -198,14 +203,12 @@ class AIProcessingDialog:
         """結果をファイルに保存"""
         try:
             # 保存フォルダを作成
-            ai_results_dir = os.path.join(self.parent.subject_dir, "ai_results")
+            ai_results_dir = os.path.join(self.parent.current_subject_dir, "ai_results")
             print(f"AI結果保存先: {ai_results_dir}")
-            print(f"self.parent.subject_dir: {self.parent.subject_dir}")
+            print(f"self.parent.current_subject_dir: {self.parent.current_subject_dir}")
             os.makedirs(ai_results_dir, exist_ok=True)
 
-            # ファイル名を生成
-            # TODO main.pyのtsを使いたい
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = self.parent.current_ts
             filename = os.path.join(ai_results_dir, f"capture_{timestamp}_llm.txt")
 
             # 保存

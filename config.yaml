@@ -1,0 +1,96 @@
+# カメラ設定ファイル
+camera:
+  # カメラソース設定
+  # type: "network" または "local"
+  type: "network"
+
+  # ネットワークカメラの設定
+  network:
+    # MJPEGストリームのURL
+    video_url: "http://192.168.110.102:8080/video"
+    # video_url: "http://10.22.250.134:8080/video"
+    # 静止画撮影用URL
+    photo_url: "http://192.168.110.102:8080/photoaf.jpg"
+    # photo_url: "http://10.22.250.134:8080/photoaf.jpg"
+    # 接続リトライ回数
+    retry_count: 3
+
+  # ローカルカメラの設定
+  local:
+    # カメラデバイスインデックス
+    device_index: 0
+
+  # カメラバッファサイズ（遅延防止のため）
+  buffer_size: 1
+
+  # フレームレート（ms）
+  frame_interval_ms: 30
+
+# ArUco マーカー検出設定
+aruco:
+  # 使用する辞書タイプ
+  dict_type: "DICT_4X4_50"
+
+  # マーカー信頼度フィルター
+  # 画像面積に対するマーカー面積の最小比率
+  area_ratio_threshold: 0.001
+
+  # マーカー凸包に対する実際のポリゴン面積の充填率
+  fill_threshold: 0.6
+
+  # 自動撮影の遅延時間（ミリ秒）
+  auto_capture_delay_ms: 800
+
+  # マーカーサイズ（mm）- 台形補正用
+  marker_size_mm: 80
+
+  # 出力DPI - 台形補正用
+  output_dpi: 200
+
+# 画像処理設定
+image_processing:
+  # ホワイトバランス補正
+  white_balance:
+    # 起動時のデフォルト状態
+    enabled_by_default: true
+
+  # エッジ検出設定
+  edge_detection:
+    gaussian_blur_kernel: [5, 5]
+    canny_threshold1: 50
+    canny_threshold2: 150
+
+  # ハフ変換設定
+  hough_transform:
+    threshold: 160
+    min_line_length: 240
+    max_line_gap: 30
+
+# UI設定
+ui:
+  # ウィンドウサイズ
+  window:
+    width: 1200
+    height: 800
+
+  # ビデオラベルの最小サイズ
+  video_label:
+    min_width: 640
+    min_height: 480
+
+  # OCR出力エリアの最大高さ
+  ocr_output:
+    max_height: 150
+
+# ディレクトリ設定
+directories:
+  # キャプチャ保存先
+  captures: "captures"
+
+# ファイルパス設定
+files:
+  # 教科マッピング設定ファイル
+  subject_mappings: "subject_mappings.json"
+
+  # カメラキャリブレーションパラメータ
+  camera_params: "camera_params.json"

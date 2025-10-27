@@ -7,6 +7,7 @@
 
 import cv2
 import numpy as np
+from typing import cast
 
 
 def auto_white_balance(image, corners):
@@ -308,7 +309,11 @@ def draw_debug_grid(image, viz_info):
 
 
 def perspective_transform_from_marker(
-    image, corners, marker_size_mm=50, output_dpi=300, draw_corners=False
+    image: np.ndarray,
+    corners: np.ndarray,
+    marker_size_mm=50,
+    output_dpi=300,
+    draw_corners=False,
 ):
     """
     ArUcoマーカーの四隅の座標を使って透視変換（台形補正）を行う
@@ -382,6 +387,7 @@ def perspective_transform_from_marker(
 
     # 最終的な変換行列 = オフセット行列 × 透視変換行列
     final_matrix = offset_matrix @ matrix
+    final_matrix = cast(np.ndarray, final_matrix)
 
     # 透視変換を適用
     transformed = cv2.warpPerspective(
@@ -397,7 +403,12 @@ def perspective_transform_from_marker(
     # 画像サイズと一致させるため、外側の境界座標を使用
     h_orig, w_orig = image.shape[:2]
     original_corners = np.array(
-        [[0, 0], [w_orig, 0], [w_orig, h_orig], [0, h_orig]],  # 左上  # 右上  # 右下  # 左下
+        [
+            [0, 0],
+            [w_orig, 0],
+            [w_orig, h_orig],
+            [0, h_orig],
+        ],  # 左上  # 右上  # 右下  # 左下
         dtype=np.float32,
     ).reshape(-1, 1, 2)
 
@@ -405,7 +416,9 @@ def perspective_transform_from_marker(
     transformed_corner_points = cv2.perspectiveTransform(original_corners, final_matrix)
 
     # 座標をリスト形式に変換 [(x1, y1), (x2, y2), (x3, y3), (x4, y4)]
-    corner_coords = [(int(pt[0][0]), int(pt[0][1])) for pt in transformed_corner_points]
+    # transformed_corner_points は shape (N,1,2) の配列なので (N,2) に整形してから展開する
+    pts2 = transformed_corner_points.reshape(-1, 2)
+    corner_coords = [(int(float(x)), int(float(y))) for x, y in pts2]
 
     if draw_corners:
         # 変換後の4隅にマーカーを描画する

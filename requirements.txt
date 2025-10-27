@@ -2,6 +2,7 @@ PySide6>=6.2
 opencv-python>=4.8.0
 yomitoku
 requests
+PyYAML>=6.0
 # Pillow
 # torch==2.5.1
 # torchvision==0.20.1
