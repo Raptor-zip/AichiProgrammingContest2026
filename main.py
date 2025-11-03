@@ -51,7 +51,8 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.config = get_config()
 
         self.setWindowTitle("Aruco + OCR Camera")
-        self.resize(self.config.get_window_width(), self.config.get_window_height())
+        self.resize(self.config.get_window_width(),
+                    self.config.get_window_height())
 
         # ウィンドウアイコンを設定
         icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
@@ -246,9 +247,9 @@ class CameraWindow(QtWidgets.QMainWindow):
         # (ビデオ表示ラベル、コントロールボタン群、OCR 出力)
         # UI 部分は後ほど update_frame() で画像を QLabel に流し込みます
         # -----
-        central = QtWidgets.QWidget()
-        self.setCentralWidget(central)
-        layout = QtWidgets.QVBoxLayout(central)
+        # メインのキャプチャ画面を保持しておき、AI画面と切り替えられるようにする
+        self.camera_central = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(self.camera_central)
 
         # カメラ映像を表示する QLabel
         self.video_label = QtWidgets.QLabel()
@@ -303,14 +304,6 @@ class CameraWindow(QtWidgets.QMainWindow):
 
         controls.addItem(spacer)
 
-        # AI処理ボタンを追加
-        self.ai_process_btn = QtWidgets.QPushButton("🤖 AI処理")
-        self.ai_process_btn.setObjectName("aiButton")
-        self.ai_process_btn.clicked.connect(self.open_ai_processing)
-        self.ai_process_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        self.ai_process_btn.setEnabled(False)  # 初期状態では無効
-        controls.addWidget(self.ai_process_btn)
-
         # 撮影後に一時停止したライブフィードを再開するボタン
         self.resume_btn = QtWidgets.QPushButton("📷 撮影再開")
         self.resume_btn.setObjectName("resumeButton")
@@ -318,18 +311,233 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.resume_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         controls.addWidget(self.resume_btn)
 
-        self.quit_btn = QtWidgets.QPushButton("✕ 終了")
-        self.quit_btn.setObjectName("quitButton")
-        self.quit_btn.clicked.connect(self.close)
-        self.quit_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        controls.addWidget(self.quit_btn)
-
         # OCR の結果などを表示するテキスト領域
         self.ocr_output = QtWidgets.QTextEdit()
         self.ocr_output.setReadOnly(True)
-        self.ocr_output.setMaximumHeight(self.config.get_ocr_output_max_height())
+        self.ocr_output.setMaximumHeight(
+            self.config.get_ocr_output_max_height())
         self.ocr_output.setPlaceholderText("OCR結果がここに表示されます...")
         layout.addWidget(self.ocr_output)
+
+        # --- AI画面を作成 (画面遷移用) ---
+        self.ai_page = QtWidgets.QWidget()
+        ai_layout = QtWidgets.QVBoxLayout(self.ai_page)
+        ai_layout.setContentsMargins(20, 20, 20, 20)
+        ai_layout.setSpacing(12)
+
+        ai_title = QtWidgets.QLabel("📚 過去の撮影履歴")
+        ai_title.setStyleSheet(
+            "font-size:18px; color: #e0e0e0; font-weight: bold;")
+        ai_layout.addWidget(ai_title)
+
+        # 水平分割: 左側にリスト、右側に詳細表示
+        ai_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+
+        # 左側: 撮影履歴リスト
+        left_widget = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 教科フィルター
+        filter_layout = QtWidgets.QHBoxLayout()
+        filter_label = QtWidgets.QLabel("教科で絞り込み:")
+        filter_label.setStyleSheet("color: #e0e0e0;")
+        filter_layout.addWidget(filter_label)
+
+        self.subject_filter = QtWidgets.QComboBox()
+        self.subject_filter.setStyleSheet("""
+            QComboBox {
+                background-color: #16213e;
+                color: #e0e0e0;
+                border: 2px solid #533483;
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QComboBox:hover {
+                border: 2px solid #6b4397;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #16213e;
+                color: #e0e0e0;
+                selection-background-color: #533483;
+            }
+        """)
+        self.subject_filter.currentTextChanged.connect(
+            self.filter_captures_by_subject)
+        filter_layout.addWidget(self.subject_filter)
+        filter_layout.addStretch()
+        left_layout.addLayout(filter_layout)
+
+        # 撮影履歴リスト
+        self.capture_list = QtWidgets.QListWidget()
+        self.capture_list.setStyleSheet("""
+            QListWidget {
+                background-color: #16213e;
+                color: #e0e0e0;
+                border: 2px solid #533483;
+                border-radius: 8px;
+                padding: 4px;
+                font-size: 13px;
+            }
+            QListWidget::item {
+                padding: 8px;
+                border-bottom: 1px solid #533483;
+            }
+            QListWidget::item:selected {
+                background-color: #533483;
+            }
+            QListWidget::item:hover {
+                background-color: #3d2564;
+            }
+        """)
+        self.capture_list.itemSelectionChanged.connect(
+            self.on_capture_selected)
+        left_layout.addWidget(self.capture_list)
+
+        ai_splitter.addWidget(left_widget)
+
+        # 右側: 詳細表示
+        right_widget = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 画像プレビュー
+        self.preview_label = QtWidgets.QLabel("画像を選択してください")
+        self.preview_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.preview_label.setStyleSheet("""
+            QLabel {
+                background-color: #0f3460;
+                border: 2px solid #533483;
+                border-radius: 8px;
+                color: #808080;
+                min-height: 300px;
+            }
+        """)
+        self.preview_label.setScaledContents(False)
+        right_layout.addWidget(self.preview_label, stretch=3)
+
+        # OCRテキスト表示
+        self.ai_text_display = QtWidgets.QTextEdit()
+        self.ai_text_display.setReadOnly(True)
+        self.ai_text_display.setPlaceholderText("OCR結果がここに表示されます")
+        right_layout.addWidget(self.ai_text_display, stretch=2)
+
+        # AI処理ボタン
+        ai_process_detail_btn = QtWidgets.QPushButton("🤖 AI処理を実行")
+        ai_process_detail_btn.setObjectName("aiButton")
+        ai_process_detail_btn.clicked.connect(self.open_ai_processing)
+        ai_process_detail_btn.setCursor(
+            QtCore.Qt.CursorShape.PointingHandCursor)
+        right_layout.addWidget(ai_process_detail_btn)
+
+        ai_splitter.addWidget(right_widget)
+        ai_splitter.setStretchFactor(0, 1)
+        ai_splitter.setStretchFactor(1, 2)
+
+        ai_layout.addWidget(ai_splitter)
+
+        # 中央ウィジェットは QStackedWidget を使って画面遷移を行う
+        # （setCentralWidget でウィジェットを入れ替えると古いウィジェットが
+        #  削除されてしまい、C++オブジェクトが既に削除される問題が発生するため）
+
+        # メインコンテナ（上部にモード切替ボタン、下部にスタック）
+        main_container = QtWidgets.QWidget()
+        main_layout = QtWidgets.QVBoxLayout(main_container)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # 上部: モード切替バー
+        mode_bar = QtWidgets.QWidget()
+        mode_bar.setStyleSheet("""
+            QWidget {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #533483, stop:1 #3d2564);
+                border-bottom: 2px solid #6b4397;
+            }
+        """)
+        mode_bar_layout = QtWidgets.QHBoxLayout(mode_bar)
+        mode_bar_layout.setContentsMargins(10, 5, 10, 5)
+        mode_bar_layout.setSpacing(10)
+
+        # モード切替ボタン
+        self.camera_mode_btn = QtWidgets.QPushButton("📷 撮影モード")
+        self.camera_mode_btn.setCheckable(True)
+        self.camera_mode_btn.setChecked(True)
+        self.camera_mode_btn.clicked.connect(self.show_camera_page)
+        self.camera_mode_btn.setCursor(
+            QtCore.Qt.CursorShape.PointingHandCursor)
+        self.camera_mode_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton:checked {
+                background-color: #1976D2;
+                border: 2px solid #64B5F6;
+            }
+            QPushButton:hover {
+                background-color: #42A5F5;
+            }
+        """)
+        mode_bar_layout.addWidget(self.camera_mode_btn)
+
+        self.ai_mode_btn = QtWidgets.QPushButton("📚 AIモード")
+        self.ai_mode_btn.setCheckable(True)
+        self.ai_mode_btn.setChecked(False)
+        self.ai_mode_btn.clicked.connect(self.show_ai_page)
+        self.ai_mode_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.ai_mode_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #9C27B0;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton:checked {
+                background-color: #7B1FA2;
+                border: 2px solid #CE93D8;
+            }
+            QPushButton:hover {
+                background-color: #AB47BC;
+            }
+        """)
+        mode_bar_layout.addWidget(self.ai_mode_btn)
+        # ボタンサイズを統一（高さと最小幅）
+        uniform_height = 36
+        uniform_min_width = 120
+        try:
+            self.camera_mode_btn.setFixedHeight(uniform_height)
+            self.camera_mode_btn.setMinimumWidth(uniform_min_width)
+            self.ai_mode_btn.setFixedHeight(uniform_height)
+            self.ai_mode_btn.setMinimumWidth(uniform_min_width)
+        except Exception:
+            pass
+
+        mode_bar_layout.addStretch()
+
+        main_layout.addWidget(mode_bar)
+
+        # スタック
+        self.stack = QtWidgets.QStackedWidget()
+        self.stack.addWidget(self.camera_central)
+        self.stack.addWidget(self.ai_page)
+        main_layout.addWidget(self.stack)
+
+        self.setCentralWidget(main_container)
+
+        # 初期はカメラ画面を表示
+        self.stack.setCurrentWidget(self.camera_central)
 
         # カメラからフレームを定期的に取得して表示するためのタイマー
         # 大体 30ms ごと（約33fps）で update_frame を呼ぶ
@@ -373,7 +581,8 @@ class CameraWindow(QtWidgets.QMainWindow):
         """教科マッピングをJSONファイルに保存"""
         try:
             with open(self.settings_file, "w", encoding="utf-8") as f:
-                json.dump(self.subject_mappings, f, ensure_ascii=False, indent=2)
+                json.dump(self.subject_mappings, f,
+                          ensure_ascii=False, indent=2)
             return True
         except Exception as e:
             QtWidgets.QMessageBox.critical(
@@ -439,18 +648,32 @@ class CameraWindow(QtWidgets.QMainWindow):
         # If camera is paused, show the paused frame instead but keep reading to maintain stream sync
         if self.camera_paused:
             if self.paused_display_frame is not None:
-                # Display the paused frame
-                rgb = cv2.cvtColor(self.paused_display_frame, cv2.COLOR_BGR2RGB)
-                h, w, ch = rgb.shape
-                bytes_per_line = ch * w
-                qimg = QtGui.QImage(
-                    rgb.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888
-                )
-                pix = QtGui.QPixmap.fromImage(qimg)
-                pix = pix.scaled(
-                    self.video_label.size(), QtCore.Qt.AspectRatioMode.KeepAspectRatio
-                )
-                self.video_label.setPixmap(pix)
+                # Display the paused frame. The QLabel may have been deleted
+                # (e.g. due to central widget swap), so guard against RuntimeError.
+                try:
+                    rgb = cv2.cvtColor(
+                        self.paused_display_frame, cv2.COLOR_BGR2RGB)
+                    h, w, ch = rgb.shape
+                    bytes_per_line = ch * w
+                    qimg = QtGui.QImage(
+                        rgb.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888
+                    )
+                    pix = QtGui.QPixmap.fromImage(qimg)
+                    try:
+                        label_size = self.video_label.size()
+                    except RuntimeError:
+                        return
+                    if not pix.isNull():
+                        pix = pix.scaled(
+                            label_size, QtCore.Qt.AspectRatioMode.KeepAspectRatio
+                        )
+                        try:
+                            self.video_label.setPixmap(pix)
+                        except RuntimeError:
+                            return
+                except RuntimeError:
+                    # Underlying Qt object was deleted; nothing to do
+                    return
             return
 
         # ArUco マーカー検出: グレースケールで検出を行い、検出があればマーカー候補をフィルタ
@@ -494,7 +717,8 @@ class CameraWindow(QtWidgets.QMainWindow):
             try:
                 fc = [c.astype(float) for c in filtered_corners]
                 fid = (
-                    cv2.UMat(cv2.UMat(np.array(filtered_ids))).get() if False else None
+                    cv2.UMat(cv2.UMat(np.array(filtered_ids))
+                             ).get() if False else None
                 )
             except Exception:
                 # 最小限: use filtered_corners and filtered_ids directly
@@ -536,11 +760,19 @@ class CameraWindow(QtWidgets.QMainWindow):
             rgb.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888
         )
         pix = QtGui.QPixmap.fromImage(qimg)
-        # scale to label size
-        pix = pix.scaled(
-            self.video_label.size(), QtCore.Qt.AspectRatioMode.KeepAspectRatio
-        )
-        self.video_label.setPixmap(pix)
+        # scale to label size — ensure label still exists
+        try:
+            label_size = self.video_label.size()
+        except RuntimeError:
+            # QLabel deleted (central widget swapped) — skip updating
+            return
+        if not pix.isNull():
+            try:
+                pix = pix.scaled(
+                    label_size, QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+                self.video_label.setPixmap(pix)
+            except RuntimeError:
+                return
 
     def take_picture(self):
         if self.cap_type == "network":
@@ -649,7 +881,8 @@ class CameraWindow(QtWidgets.QMainWindow):
 
         paper_corners = None
         for cnt in contours:
-            approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
+            approx = cv2.approxPolyDP(
+                cnt, 0.02 * cv2.arcLength(cnt, True), True)
             if len(approx) == 4:
                 paper_corners = approx.reshape(4, 2)
                 break
@@ -658,7 +891,8 @@ class CameraWindow(QtWidgets.QMainWindow):
         if paper_corners is not None:
             pts = paper_corners.astype(int)
             # 線を描く
-            cv2.polylines(overlay, [pts], isClosed=True, color=(0, 255, 0), thickness=3)
+            cv2.polylines(overlay, [pts], isClosed=True,
+                          color=(0, 255, 0), thickness=3)
             # 四隅に小さい円を描画
             for x, y in pts:
                 cv2.circle(overlay, (int(x), int(y)), 6, (0, 255, 0), -1)
@@ -715,7 +949,8 @@ class CameraWindow(QtWidgets.QMainWindow):
         # ステップ3: 回転補正を実行（トリミング後の画像に対して）
         # トリミング後の画像でマーカーを再検出
         gray_trimmed = cv2.cvtColor(processing_frame, cv2.COLOR_BGR2GRAY)
-        corners_trimmed, ids_trimmed, _ = self.detector.detectMarkers(gray_trimmed)
+        corners_trimmed, ids_trimmed, _ = self.detector.detectMarkers(
+            gray_trimmed)
 
         if corners_trimmed is not None and len(corners_trimmed) > 0:
             marker_angle = calculate_marker_rotation(corners_trimmed)
@@ -728,14 +963,16 @@ class CameraWindow(QtWidgets.QMainWindow):
             rotation_applied = 0.0
 
         if self.debug_mode:
-            rotated_filename = os.path.join(subject_dir, f"capture_{ts}_3_rotated.jpg")
+            rotated_filename = os.path.join(
+                subject_dir, f"capture_{ts}_3_rotated.jpg")
             cv2.imwrite(rotated_filename, rotated_frame)
 
         # ステップ4: 回転後の画像に対してホワイトバランス補正を適用
         if self.white_balance_enabled:
             # 回転後の画像でマーカーを再検出
             gray_rotated = cv2.cvtColor(rotated_frame, cv2.COLOR_BGR2GRAY)
-            corners_rotated, ids_rotated, _ = self.detector.detectMarkers(gray_rotated)
+            corners_rotated, ids_rotated, _ = self.detector.detectMarkers(
+                gray_rotated)
 
             if corners_rotated is not None and len(corners_rotated) > 0:
                 corrected_frame, viz_info, white_bgr, black_bgr = auto_white_balance(
@@ -750,7 +987,8 @@ class CameraWindow(QtWidgets.QMainWindow):
             viz_info, white_bgr, black_bgr = None, None, None
 
         if self.debug_mode:
-            wb_filename = os.path.join(subject_dir, f"capture_{ts}_4_white_balance.jpg")
+            wb_filename = os.path.join(
+                subject_dir, f"capture_{ts}_4_white_balance.jpg")
             cv2.imwrite(wb_filename, corrected_frame)
 
         # ファイル名を生成して最終画像を保存
@@ -760,34 +998,43 @@ class CameraWindow(QtWidgets.QMainWindow):
         # デバッグモードの場合、グリッド付きの画像も保存
         if self.debug_mode and viz_info is not None:
             debug_frame = draw_debug_grid(corrected_frame, viz_info)
-            debug_filename = os.path.join(subject_dir, f"capture_{ts}_5_grid.png")
+            debug_filename = os.path.join(
+                subject_dir, f"capture_{ts}_5_grid.png")
             cv2.imwrite(debug_filename, debug_frame)
 
         # show the saved image in the video_label
-        try:
-            # load with QImage for display
-            image = QtGui.QImage(filename)
+        # Try to load with QImage first. However, QImage may return a null image
+        # if the image is too large (Qt allocation limits). Detect that case and
+        # fall back to OpenCV-based conversion which is more robust here.
+        image = QtGui.QImage(filename)
+        if image.isNull():
+            # Fallback: convert with OpenCV -> QImage from buffer
+            try:
+                rgb = cv2.cvtColor(corrected_frame, cv2.COLOR_BGR2RGB)
+                h, w, ch = rgb.shape
+                bytes_per_line = ch * w
+                qimg = QtGui.QImage(
+                    rgb.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888
+                )
+                pix = QtGui.QPixmap.fromImage(qimg)
+            except Exception:
+                pix = QtGui.QPixmap()
+        else:
             pix = QtGui.QPixmap.fromImage(image)
+
+        # Ensure pixmap is valid before scaling/setting to avoid QPixmap::scaled null warnings
+        if not pix.isNull():
             pix = pix.scaled(
                 self.video_label.size(), QtCore.Qt.AspectRatioMode.KeepAspectRatio
             )
             self.video_label.setPixmap(pix)
             # Store the paused display frame
             self.paused_display_frame = corrected_frame.copy()
-        except Exception:
-            rgb = cv2.cvtColor(corrected_frame, cv2.COLOR_BGR2RGB)
-            h, w, ch = rgb.shape
-            bytes_per_line = ch * w
-            qimg = QtGui.QImage(
-                rgb.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888
+        else:
+            # As a last resort, show nothing but log a warning
+            print(
+                "Warning: failed to create a valid QPixmap for display (image may be too large)."
             )
-            pix = QtGui.QPixmap.fromImage(qimg)
-            pix = pix.scaled(
-                self.video_label.size(), QtCore.Qt.AspectRatioMode.KeepAspectRatio
-            )
-            self.video_label.setPixmap(pix)
-            # Store the paused display frame
-            self.paused_display_frame = corrected_frame.copy()
 
         perspective_info = "\n台形補正: 適用" if perspective_applied else ""
         rotation_info = (
@@ -827,14 +1074,15 @@ class CameraWindow(QtWidgets.QMainWindow):
             try:
                 print(type(results))
 
-                json_filename = os.path.join(subject_dir, f"capture_{ts}_analysis.json")
+                json_filename = os.path.join(
+                    subject_dir, f"capture_{ts}_analysis.json")
 
                 results.to_json(json_filename, img=corrected_frame)
-                
+
                 # wordsから各contentを改行区切りで結合
                 ocr_text = "\n".join(word.content for word in results.words)
                 print(ocr_text)
-                
+
                 self.last_ocr_text = ocr_text
             except Exception as e:
                 print(f"Warning: failed to export analysis to HTML: {e}")
@@ -842,7 +1090,8 @@ class CameraWindow(QtWidgets.QMainWindow):
         # 可視化画像を保存（存在する場合のみ）
         if ocr_vis is not None:
             try:
-                ocr_filename = os.path.join(subject_dir, f"capture_{ts}_ocr_vis.jpg")
+                ocr_filename = os.path.join(
+                    subject_dir, f"capture_{ts}_ocr_vis.jpg")
                 cv2.imwrite(ocr_filename, ocr_vis)
             except Exception as e:
                 print(f"Warning: failed to save ocr_vis: {e}")
@@ -854,11 +1103,6 @@ class CameraWindow(QtWidgets.QMainWindow):
                 cv2.imwrite(layout_filename, layout_vis)
             except Exception as e:
                 print(f"Warning: failed to save layout_vis: {e}")
-
-        if self.last_ocr_text.strip():  # テキストが空でない場合のみ有効化
-            self.ai_process_btn.setEnabled(True)
-        else:
-            self.ai_process_btn.setEnabled(False)
 
     def on_yomitoku_error(self, error_msg):
         """YomiTokuの処理でエラーが発生した時のコールバック"""
@@ -880,8 +1124,159 @@ class CameraWindow(QtWidgets.QMainWindow):
             return
 
         # AI処理ダイアログを表示
-        dialog = AIProcessingDialog(self, self.last_ocr_text, self.last_subject_name)
+        dialog = AIProcessingDialog(
+            self, self.last_ocr_text, self.last_subject_name)
         dialog.exec()
+
+    def show_ai_page(self):
+        """カメラ画面からAI画面へ遷移する。captures フォルダから履歴を読み込む。"""
+        # カメラ表示を一時停止（フレーム読み取りは続ける）
+        self.camera_paused = True
+        # スタック内のページを切り替える
+        try:
+            self.stack.setCurrentWidget(self.ai_page)
+            # ボタンの状態を更新
+            self.camera_mode_btn.setChecked(False)
+            self.ai_mode_btn.setChecked(True)
+            # captures フォルダから履歴を読み込んで表示
+            self.load_capture_history()
+        except Exception as e:
+            print(f"Warning: failed to switch to AI page: {e}")
+            return
+
+    def show_camera_page(self):
+        """AI画面からカメラ画面へ戻す。"""
+        # スタック内のページを切り替える
+        try:
+            self.stack.setCurrentWidget(self.camera_central)
+            # ボタンの状態を更新
+            self.camera_mode_btn.setChecked(True)
+            self.ai_mode_btn.setChecked(False)
+        except Exception as e:
+            print(f"Warning: failed to switch to camera page: {e}")
+            return
+        # カメラ表示を再開
+        self.camera_paused = False
+
+    def load_capture_history(self):
+        """captures フォルダから撮影履歴を読み込んでリスト表示する。"""
+        self.capture_list.clear()
+        self.subject_filter.clear()
+
+        # 全教科を取得
+        subjects = set(["すべて"])
+        capture_items = []
+
+        if not os.path.exists(self.captures_dir):
+            return
+
+        # 教科ごとのフォルダをスキャン
+        for subject_name in os.listdir(self.captures_dir):
+            subject_path = os.path.join(self.captures_dir, subject_name)
+            if not os.path.isdir(subject_path):
+                continue
+
+            subjects.add(subject_name)
+
+            # 各教科フォルダ内の画像ファイルをスキャン
+            for filename in os.listdir(subject_path):
+                if filename.endswith('.png') and not any(x in filename for x in ['_ocr_vis', '_layout_vis', '_grid', '_original', '_perspective', '_detected', '_rotated', '_white_balance']):
+                    # タイムスタンプを抽出 (capture_20231103_123456.png)
+                    if filename.startswith('capture_') and len(filename) > 20:
+                        timestamp_str = filename[8:23]  # 20231103_123456
+                        try:
+                            # タイムスタンプをパース
+                            dt = datetime.strptime(
+                                timestamp_str, "%Y%m%d_%H%M%S")
+
+                            # JSONファイルの存在確認
+                            json_path = os.path.join(
+                                subject_path, f"capture_{timestamp_str}_analysis.json")
+                            has_ocr = os.path.exists(json_path)
+
+                            capture_items.append({
+                                'subject': subject_name,
+                                'timestamp': dt,
+                                'timestamp_str': timestamp_str,
+                                'image_path': os.path.join(subject_path, filename),
+                                'json_path': json_path if has_ocr else None,
+                                'display_text': f"{subject_name} - {dt.strftime('%Y/%m/%d %H:%M:%S')}"
+                            })
+                        except ValueError:
+                            continue
+
+        # タイムスタンプでソート（新しい順）
+        capture_items.sort(key=lambda x: x['timestamp'], reverse=True)
+
+        # 教科フィルターを設定
+        self.subject_filter.addItems(sorted(subjects))
+        self.subject_filter.setCurrentText("すべて")
+
+        # リストに追加（全データを保持）
+        self.all_capture_items = capture_items
+        self.filter_captures_by_subject("すべて")
+
+    def filter_captures_by_subject(self, subject):
+        """教科で撮影履歴をフィルタリング。"""
+        self.capture_list.clear()
+
+        if not hasattr(self, 'all_capture_items'):
+            return
+
+        for item in self.all_capture_items:
+            if subject == "すべて" or item['subject'] == subject:
+                list_item = QtWidgets.QListWidgetItem(item['display_text'])
+                list_item.setData(QtCore.Qt.ItemDataRole.UserRole, item)
+                self.capture_list.addItem(list_item)
+
+    def on_capture_selected(self):
+        """リストで選択された撮影履歴の詳細を表示。"""
+        current_item = self.capture_list.currentItem()
+        if not current_item:
+            return
+
+        item_data = current_item.data(QtCore.Qt.ItemDataRole.UserRole)
+        if not item_data:
+            return
+
+        # 画像を表示
+        image_path = item_data['image_path']
+        if os.path.exists(image_path):
+            pixmap = QtGui.QPixmap(image_path)
+            if not pixmap.isNull():
+                # プレビューラベルのサイズに合わせてスケーリング
+                scaled_pixmap = pixmap.scaled(
+                    self.preview_label.size(),
+                    QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                    QtCore.Qt.TransformationMode.SmoothTransformation
+                )
+                self.preview_label.setPixmap(scaled_pixmap)
+            else:
+                self.preview_label.setText("画像の読み込みに失敗しました")
+        else:
+            self.preview_label.setText("画像ファイルが見つかりません")
+
+        # OCR結果を表示
+        json_path = item_data.get('json_path')
+        if json_path and os.path.exists(json_path):
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    # words から content を抽出
+                    if 'words' in data:
+                        ocr_text = '\n'.join(word.get('content', '')
+                                             for word in data['words'])
+                        self.ai_text_display.setPlainText(ocr_text)
+                        # AI処理用に保存
+                        self.last_ocr_text = ocr_text
+                        self.last_subject_name = item_data['subject']
+                    else:
+                        self.ai_text_display.setPlainText("OCR結果が見つかりません")
+            except Exception as e:
+                self.ai_text_display.setPlainText(f"OCR結果の読み込みエラー: {e}")
+        else:
+            self.ai_text_display.setPlainText("OCR結果がありません")
+            self.last_ocr_text = ""
 
     def closeEvent(self, event):
         self.timer.stop()
