@@ -1,0 +1,8 @@
+fastapi>=0.109.0
+uvicorn>=0.27.0
+python-multipart>=0.0.9
+opencv-python>=4.8.0
+yomitoku
+requests
+PyYAML>=6.0
+pydantic>=2.0

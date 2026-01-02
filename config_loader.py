@@ -110,8 +110,11 @@ class ConfigLoader:
         """ArUcoマーカーの充填率閾値を取得"""
         return self.get("aruco", "fill_threshold", default=0.6)
 
-    def get_aruco_auto_capture_delay_ms(self) -> int:
-        """ArUco検出後の自動撮影遅延時間を取得"""
+    def get_auto_capture_delay_ms(self) -> int:
+        """自動撮影の遅延時間（ミリ秒）を取得"""
+        # Alias if needed, or ensure key matches config.yaml structure
+        # In config.yaml it is under 'aruco' -> 'auto_capture_delay_ms'
+        # The previous attempt might have failed if name mismatch or simple typo in caller
         return self.get("aruco", "auto_capture_delay_ms", default=800)
 
     def get_aruco_marker_size_mm(self) -> int:
