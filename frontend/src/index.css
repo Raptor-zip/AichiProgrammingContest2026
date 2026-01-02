@@ -2,6 +2,54 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer utilities {
+  .animate-spin-slow {
+    animation: spin 3s linear infinite;
+  }
+
+  .animate-reverse-spin {
+    animation: spin 4s linear infinite reverse;
+  }
+
+  .animate-flash {
+    animation: flash 0.5s ease-out forwards;
+  }
+
+  @keyframes flash {
+    0% {
+      opacity: 0.8;
+    }
+
+    100% {
+      opacity: 0;
+    }
+  }
+}
+
+@layer utilities {
+  .animate-spin-slow {
+    animation: spin 3s linear infinite;
+  }
+
+  .animate-reverse-spin {
+    animation: spin 4s linear infinite reverse;
+  }
+
+  .animate-flash {
+    animation: flash 0.5s ease-out forwards;
+  }
+
+  @keyframes flash {
+    0% {
+      opacity: 0.8;
+    }
+
+    100% {
+      opacity: 0;
+    }
+  }
+}
+
 @layer base {
   body {
     @apply bg-dark-bg text-gray-200;

@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { Camera, RefreshCw } from 'lucide-react';
+import { CaptureHud } from './CaptureHud';
 
 // You might usually put this in a config or context
 const API_BASE = "http://127.0.0.1:8000/api";
@@ -8,6 +10,34 @@ export const CameraView: React.FC = () => {
     const [isCapturing, setIsCapturing] = useState(false);
     const [lastCapture, setLastCapture] = useState<string | null>(null);
     const [errorCount, setErrorCount] = useState(0);
+
+    // Capture Status State
+    const [captureProgress, setCaptureProgress] = useState(0);
+    const [captureTriggered, setCaptureTriggered] = useState(false);
+
+    useEffect(() => {
+        // SSE connection
+        const eventSource = new EventSource(`${API_BASE}/capture_status`);
+
+        eventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                setCaptureProgress(data.progress || 0);
+
+                if (data.triggered) {
+                    setCaptureTriggered(true);
+                } else {
+                    setCaptureTriggered(false);
+                }
+            } catch (e) {
+                // ignore parse error
+            }
+        };
+
+        return () => {
+            eventSource.close();
+        };
+    }, []);
 
     // To force re-render/re-connect stream if needed
     const refreshStream = () => {
@@ -51,6 +81,10 @@ export const CameraView: React.FC = () => {
                     className="w-full h-full object-contain"
                     onError={handleStreamError}
                 />
+
+                {/* HUD Overlay */}
+                <CaptureHud progress={captureProgress} triggered={captureTriggered} />
+
                 {errorCount >= 5 && (
                     <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70 text-red-500 font-bold">
                         Stream Offline. Check backend.

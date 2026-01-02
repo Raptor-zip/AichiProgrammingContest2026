@@ -136,8 +136,15 @@ class CameraManager:
                         self.auto_capture_triggered = True
                         self.capture_flash_time = time.time() # Trigger flash
                         if self.on_capture_callback:
-                            # Invoke callback with copy of frame
-                            self.on_capture_callback(frame.copy())
+                            # Invoke callback with copy of frame and detected IDs
+                            # ids is usually [[id]], so we might want to flatten or pass as is
+                            # Let's pass the raw ids array (numpy) or list
+                            detected_ids = ids.flatten().tolist() if ids is not None else []
+                            # Pass corners as list of lists (or similar structure compatible with JSON/simple passing)
+                            # corners is tuple of arrays. image_processing expects list of arrays or tuple of arrays.
+                            # We'll pass it as is (list of numpy arrays) inside the thread.
+                            detected_corners = [c.tolist() for c in corners] if corners else []
+                            self.on_capture_callback(frame.copy(), detected_ids, detected_corners)
                 else:
                     # Update progress
                     self.current_progress = elapsed / self.config.get_auto_capture_delay_ms()
@@ -174,35 +181,6 @@ class CameraManager:
 
         if ids is not None and len(ids) > 0:
             aruco.drawDetectedMarkers(display_frame, corners, ids)
-
-        # Draw Visual Feedback
-        h, w = display_frame.shape[:2]
-
-        # 1. Progress Bar (Timer)
-        if self.current_progress > 0:
-            bar_w = int(w * 0.6)
-            bar_h = 20
-            x = (w - bar_w) // 2
-            y = h - 50
-
-            # Background
-            cv2.rectangle(display_frame, (x, y), (x + bar_w, y + bar_h), (50, 50, 50), -1)
-            # Progress
-            fill_w = int(bar_w * min(self.current_progress, 1.0))
-            color = (0, 255, 255) if self.current_progress < 1.0 else (0, 255, 0)
-            cv2.rectangle(display_frame, (x, y), (x + fill_w, y + bar_h), color, -1)
-            # Border
-            cv2.rectangle(display_frame, (x, y), (x + bar_w, y + bar_h), (255, 255, 255), 2)
-
-            # Text
-            text = "Keep Stable..." if self.current_progress < 1.0 else "CAPTURED!"
-            cv2.putText(display_frame, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-        # 2. Flash Effect
-        if time.time() - self.capture_flash_time < 0.3: # 300ms flash
-            overlay = display_frame.copy()
-            cv2.rectangle(overlay, (0, 0), (w, h), (255, 255, 255), -1)
-            cv2.addWeighted(overlay, 0.5, display_frame, 0.5, 0, display_frame)
 
         # JPEG encoding
         ret, buffer = cv2.imencode('.jpg', display_frame)

@@ -16,10 +16,10 @@ interface OCRBlock {
 interface ImageOverlayProps {
     src: string;
     ocrData: any; // Flexible for now
-    onTextClick?: (text: string) => void;
+    onTextClickTrigger?: (text: string, e: React.MouseEvent) => void;
 }
 
-export const ImageOverlay: React.FC<ImageOverlayProps> = ({ src, ocrData, onTextClick }) => {
+export const ImageOverlay: React.FC<ImageOverlayProps> = ({ src, ocrData, onTextClickTrigger }) => {
     const [imgSize, setImgSize] = useState<{ w: number, h: number } | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
@@ -116,7 +116,7 @@ export const ImageOverlay: React.FC<ImageOverlayProps> = ({ src, ocrData, onText
                     }}
                     onClick={(e) => {
                         e.stopPropagation();
-                        onTextClick && onTextClick(text);
+                        onTextClickTrigger && onTextClickTrigger(text, e);
                     }}
                     title={text}
                 >

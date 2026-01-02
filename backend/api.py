@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
 from backend.camera_manager import camera_manager
+from backend.llm_service import llm_service
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 import os
@@ -10,6 +11,8 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 import sys
 import threading
+import asyncio
+import asyncio
 
 # Add root to path for imports if needed (already in main.py but good for linting)
 # sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -36,6 +39,10 @@ class OCRRequest(BaseModel):
     image_path: Optional[str] = None
     use_last_capture: bool = True
 
+class StudyRequest(BaseModel):
+    text: str
+    type: str  # "explain" or "problem"
+
 @router.get("/stream")
 async def video_stream():
     """Stream video from the camera"""
@@ -47,6 +54,46 @@ async def video_stream():
 @router.get("/status")
 async def get_status():
     return {"status": "ok", "camera_connected": camera_manager.cap is not None}
+
+    return {"status": "ok", "camera_connected": camera_manager.cap is not None}
+
+@router.get("/capture_status")
+async def capture_status_stream(request: Request):
+    """SSE stream for capture status"""
+    async def event_generator():
+        while True:
+            if await request.is_disconnected():
+                break
+
+            # Get state
+            progress = camera_manager.current_progress
+            triggered = camera_manager.auto_capture_triggered
+
+            data = json.dumps({"progress": progress, "triggered": triggered})
+            yield f"data: {data}\n\n"
+            await asyncio.sleep(0.05) # 20fps updates
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    return {"status": "ok", "camera_connected": camera_manager.cap is not None}
+
+@router.get("/capture_status")
+async def capture_status_stream(request: Request):
+    """SSE stream for capture status"""
+    async def event_generator():
+        while True:
+            if await request.is_disconnected():
+                break
+
+            # Get state
+            progress = camera_manager.current_progress
+            triggered = camera_manager.auto_capture_triggered
+
+            data = json.dumps({"progress": progress, "triggered": triggered})
+            yield f"data: {data}\n\n"
+            await asyncio.sleep(0.05) # 20fps updates
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @router.post("/capture")
 async def capture_image(background_tasks: BackgroundTasks):
@@ -128,7 +175,7 @@ def perform_ocr_background(image_path: str):
     except Exception as e:
         print(f"Background OCR Error: {e}")
 
-@router.get("/captures/{filename}/ocr")
+@router.get("/captures/{filename:path}/ocr")
 async def get_ocr_result(filename: str):
     """Get OCR JSON for a specific capture"""
     # filename includes extension e.g. "capture_123.jpg"
@@ -150,6 +197,22 @@ async def get_ocr_result(filename: str):
         return {"results": data, "status": "ok"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/study_support")
+async def study_support(request: StudyRequest):
+    """Generate study support content using LLM"""
+    if not request.text:
+         raise HTTPException(status_code=400, detail="Text is required")
+
+    result = ""
+    if request.type == "explain":
+        result = llm_service.explain_text(request.text)
+    elif request.type == "problem":
+        result = llm_service.create_problems(request.text)
+    else:
+        raise HTTPException(status_code=400, detail="Invalid support type")
+
+    return {"content": result}
 
 
 @router.post("/ocr")
@@ -268,32 +331,182 @@ def glob_captures():
                 url_path = "/".join([p for p in rel_path.split(os.sep)])
 
                 stats = os.stat(full_path)
+
+                # Check for metadata
+                base_name = os.path.splitext(f)[0]
+                info_path = os.path.join(root, f"{base_name}_info.json")
+                detected_id = None
+                if os.path.exists(info_path):
+                    try:
+                        with open(info_path, 'r') as meta_f:
+                            meta = json.load(meta_f)
+                            detected_id = meta.get("detected_id")
+                    except:
+                        pass
+
+                # Check for original image
+                base_name = os.path.splitext(f)[0]
+                original_filename = f"{base_name}_original.jpg" # Assuming jpg
+                original_path = os.path.join(root, original_filename)
+                url_original = None
+                if os.path.exists(original_path):
+                     rel_path_orig = os.path.relpath(original_path, CAPTURES_DIR)
+                     url_path_orig = "/".join([p for p in rel_path_orig.split(os.sep)])
+                     url_original = f"/api/captures/{url_path_orig}"
+
                 files.append({
                     "filename": f,
                     "filepath": full_path,
                     "created_at": datetime.fromtimestamp(stats.st_mtime).isoformat(),
                     "url": f"/api/captures/{url_path}",
-                    "subject": os.path.basename(root) if root != CAPTURES_DIR else "Unclassified"
+                    "url_original": url_original,
+                    "subject": os.path.basename(root) if root != CAPTURES_DIR else "Unclassified",
+                    "detected_id": detected_id,
+                    "relative_path": url_path # For API calls needing path
                 })
 
     # Sort by mtime desc
     files.sort(key=lambda x: x['created_at'], reverse=True)
     return files
 
-def manual_trigger_auto_capture(frame: np.ndarray):
+def manual_trigger_auto_capture(frame: np.ndarray, detected_ids: List[int] = [], detected_corners: List[Any] = []):
     """Callback for auto-capture from CameraManager"""
     try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"capture_{timestamp}.jpg"
-        filepath = os.path.join(CAPTURES_DIR, filename)
 
-        # Save image (Sync IO in thread is okay here as it's the capture thread)
-        cv2.imwrite(filepath, frame)
-        print(f"Auto-saved: {filepath}")
+        # Load mappings
+        mapping_file = os.path.join(os.getcwd(), config.get_subject_mappings_file())
+        subject_mappings = {}
+        if os.path.exists(mapping_file):
+            with open(mapping_file, 'r', encoding='utf-8') as f:
+                subject_mappings = json.load(f)
+
+        # Determine subject
+        target_dir = CAPTURES_DIR # Default to root/Unclassified effectively
+        subject_name = "Unclassified"
+        detected_id = None
+
+        # Check detected IDs
+        # Priority: First mapped ID found
+        for mid in detected_ids:
+            str_id = str(mid)
+            if str_id in subject_mappings:
+                subject_name = subject_mappings[str_id]
+                target_dir = os.path.join(CAPTURES_DIR, subject_name)
+                break
+            else:
+                # If unmapped, we note the first one to register
+                if detected_id is None:
+                    detected_id = mid
+
+        if subject_name == "Unclassified":
+            target_dir = os.path.join(CAPTURES_DIR, "Unclassified")
+
+        os.makedirs(target_dir, exist_ok=True)
+        filename = f"capture_{timestamp}.jpg"
+        filepath = os.path.join(target_dir, filename)
+
+        # Save Original Image
+        original_filename = f"capture_{timestamp}_original.jpg"
+        original_filepath = os.path.join(target_dir, original_filename)
+        cv2.imwrite(original_filepath, frame)
+
+        # --- Image Processing ---
+        processing_frame = frame.copy()
+
+        # Convert corners back to numpy if needed
+        # detected_corners comes from tolist(), so it is list of list of list
+        # We need numpy arrays for cv2 functions usually
+        np_corners = [np.array(c, dtype=np.float32) for c in detected_corners]
+
+        # 1. Perspective Transform
+        if np_corners:
+            perspective_frame, _, _, _ = perspective_transform_from_marker(
+                processing_frame,
+                np_corners,
+                marker_size_mm=config.get_aruco_marker_size_mm() or 50, # fallback default
+                output_dpi=300
+            )
+
+            if perspective_frame is not None:
+                # Resize if too big (2000x2000 limit)
+                max_dim = 2000
+                h, w = perspective_frame.shape[:2]
+                if h > max_dim or w > max_dim:
+                    scale = max_dim / max(h, w)
+                    perspective_frame = cv2.resize(perspective_frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+
+                processing_frame = perspective_frame
+
+        # 2. Rotation Correction
+        if np_corners:
+            angle = calculate_marker_rotation(np_corners)
+            processing_frame, _ = correct_rotation(processing_frame, angle)
+
+        # 3. Auto White Balance (enabled by default in original main.py per config)
+        if np_corners: # WB needs corners to find white/black ref on marker
+             # Note: if we transformed, corners might not match transformed image validly for WB
+             # UNLESS WB expects original image + corners.
+             # image_processing.auto_white_balance(image, corners) logic:
+             # It uses corners[0] to find marker.
+             # If we use perspective transformed image, the marker is heavily distorted/gone or at top left?
+             # Actually, usually WB is done on the ORIGINAL image or logic needs to adapt.
+             # But if perspective_transform returns the crop of the paper, the marker might be outside or inside?
+             # Let's look at image_processing.py again. WB uses marker to find black/white.
+             # If we do WB on original frame FIRST, then transform, it's safer.
+             pass
+
+        # Let's re-order: WB first on original frame?
+        # Re-doing logic:
+        # (A) WB on Original Frame -> (B) Perspective Transform -> (C) Rotation
+        # WB modifies the frame colors.
+
+        frame_for_wb = frame.copy()
+        if np_corners and config.get_white_balance_enabled_by_default():
+            frame_wb, _, _, _ = auto_white_balance(frame_for_wb, np_corners)
+            if frame_wb is not None:
+                processing_frame = frame_wb
+
+        # Now Transform
+        if np_corners:
+             p_frame, _, _, _ = perspective_transform_from_marker(
+                processing_frame,
+                np_corners,
+                marker_size_mm=config.get_aruco_marker_size_mm() or 50,
+                output_dpi=300
+             )
+             if p_frame is not None:
+                 # Resize
+                 max_dim = 2000
+                 h, w = p_frame.shape[:2]
+                 if h > max_dim or w > max_dim:
+                    scale = max_dim / max(h, w)
+                    p_frame = cv2.resize(p_frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+                 processing_frame = p_frame
+
+        # Rotation (Usually perspective transform aligns it, but correct_rotation snaps to 90 degrees)
+        # Perspective transform aligns to marker orientation. Marker might be rotated 90 deg.
+        if np_corners:
+             angle = calculate_marker_rotation(np_corners)
+             # Note: calculate_marker_rotation uses corners of original image.
+             # If perspective transform aligned it to be "upright" relative to marker,
+             # we might need to check if marker itself was rotated relative to paper?
+             # Usually correct_rotation aligns it to 90 deg steps.
+             processing_frame, _ = correct_rotation(processing_frame, angle)
+
+
+        # Save image
+        cv2.imwrite(filepath, processing_frame)
+        print(f"Auto-saved to: {filepath} (Subject: {subject_name})")
+
+        # Save Metadata if Unclassified and has ID
+        if subject_name == "Unclassified" and detected_id is not None:
+             meta_filename = f"capture_{timestamp}_info.json"
+             meta_path = os.path.join(target_dir, meta_filename)
+             with open(meta_path, 'w', encoding='utf-8') as f:
+                 json.dump({"detected_id": int(detected_id)}, f)
 
         # Trigger background OCR
-        # We need a new thread because we are already in the capture thread
-        # and we don't want to block it with heavy OCR
         threading.Thread(target=perform_ocr_background, args=(filepath,), daemon=True).start()
 
     except Exception as e:

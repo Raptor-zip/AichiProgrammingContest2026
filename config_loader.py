@@ -6,6 +6,10 @@ config.yamlを読み込んで、アプリケーション設定を提供します
 import os
 import yaml
 from typing import Any, Dict, Optional
+from dotenv import load_dotenv
+
+# Load .env file
+load_dotenv()
 
 
 class ConfigLoader:
@@ -116,6 +120,14 @@ class ConfigLoader:
         # In config.yaml it is under 'aruco' -> 'auto_capture_delay_ms'
         # The previous attempt might have failed if name mismatch or simple typo in caller
         return self.get("aruco", "auto_capture_delay_ms", default=800)
+
+    def get_gemini_api_key(self) -> str:
+        """Gemini APIキーを取得"""
+        # 環境変数を優先、なければ設定ファイルから
+        env_key = os.environ.get("GEMINI_API_KEY")
+        if env_key:
+            return env_key
+        return self.get("llm", "api_key", default="")
 
     def get_aruco_marker_size_mm(self) -> int:
         """ArUcoマーカーのサイズ（mm）を取得"""
