@@ -6,6 +6,11 @@ UI関連のコンポーネント
 
 from PySide6 import QtCore, QtWidgets, QtGui
 
+BASE_FONT_SIZE = 16
+
+def rem(n: float) -> int:
+    return int(n * BASE_FONT_SIZE)
+
 
 class ToastNotification(QtWidgets.QLabel):
     """
@@ -15,26 +20,26 @@ class ToastNotification(QtWidgets.QLabel):
     def __init__(self, message, parent=None, duration=2000):
         super().__init__(message, parent)
         self.setStyleSheet(
-            """
-            QLabel {
+            f"""
+            QLabel {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 rgba(83, 52, 131, 240), stop:1 rgba(233, 69, 96, 240));
                 color: white;
-                padding: 18px 28px;
-                border-radius: 12px;
-                font-size: 15px;
+                padding: {rem(1.125)}px {rem(1.75)}px;
+                border-radius: {rem(0.75)}px;
+                font-size: {rem(0.9375)}px;
                 font-weight: normal;
-            }
+            }}
         """
         )
         self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.setWordWrap(True)
-        self.setMaximumWidth(450)
+        self.setMaximumWidth(rem(28.125))
         # シャドウエフェクトを追加
         shadow = QtWidgets.QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(20)
+        shadow.setBlurRadius(rem(1.25))
         shadow.setColor(QtGui.QColor("black"))
-        shadow.setOffset(0, 4)
+        shadow.setOffset(0, rem(0.25))
         self.setGraphicsEffect(shadow)
 
         # 親ウィジェットの中央に配置
@@ -43,7 +48,7 @@ class ToastNotification(QtWidgets.QLabel):
             self.adjustSize()
             parent_rect = parent.rect()
             x = (parent_rect.width() - self.width()) // 2
-            y = parent_rect.height() - self.height() - 50
+            y = parent_rect.height() - self.height() - rem(3.125)
             self.move(x, y)
 
         # 一定時間後に自動で消える
@@ -64,90 +69,90 @@ class SubjectSettingsDialog(QtWidgets.QDialog):
     def __init__(self, current_mappings=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("教科設定")
-        self.resize(600, 500)
+        self.resize(rem(37.5), rem(31.25))
 
         # モダンなスタイルを適用
         self.setStyleSheet(
-            """
-            QDialog {
+            f"""
+            QDialog {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #1a1a2e, stop:1 #16213e);
-            }
-            QLabel {
+            }}
+            QLabel {{
                 color: #e0e0e0;
-                font-size: 14px;
-                padding: 8px;
-            }
-            QTableWidget {
+                font-size: {rem(0.875)}px;
+                padding: {rem(0.5)}px;
+            }}
+            QTableWidget {{
                 background-color: #16213e;
                 alternate-background-color: #1a2540;
                 color: #e0e0e0;
-                border: 2px solid #533483;
-                border-radius: 8px;
+                border: {rem(0.125)}px solid #533483;
+                border-radius: {rem(0.5)}px;
                 gridline-color: #533483;
-                font-size: 13px;
+                font-size: {rem(0.8125)}px;
                 selection-background-color: #533483;
-            }
-            QTableWidget::item {
-                padding: 8px;
-            }
-            QTableWidget::item:selected {
+            }}
+            QTableWidget::item {{
+                padding: {rem(0.5)}px;
+            }}
+            QTableWidget::item:selected {{
                 background-color: #6b4397;
-            }
-            QHeaderView::section {
+            }}
+            QHeaderView::section {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #533483, stop:1 #3d2564);
                 color: white;
-                padding: 10px;
+                padding: {rem(0.625)}px;
                 border: none;
-                border-right: 1px solid #16213e;
+                border-right: {rem(0.0625)}px solid #16213e;
                 font-weight: normal;
-                font-size: 14px;
-            }
-            QPushButton {
+                font-size: {rem(0.875)}px;
+            }}
+            QPushButton {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #533483, stop:1 #3d2564);
                 color: white;
                 border: none;
-                border-radius: 8px;
-                padding: 10px 20px;
-                font-size: 13px;
+                border-radius: {rem(0.5)}px;
+                padding: {rem(0.625)}px {rem(1.25)}px;
+                font-size: {rem(0.8125)}px;
                 font-weight: normal;
-                min-width: 80px;
-            }
-            QPushButton:hover {
+                min-width: {rem(5)}px;
+            }}
+            QPushButton:hover {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #6b4397, stop:1 #533483);
-            }
-            QPushButton:pressed {
+            }}
+            QPushButton:pressed {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #3d2564, stop:1 #2d1a4c);
-            }
-            QPushButton#addButton {
+            }}
+            QPushButton#addButton {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #4CAF50, stop:1 #388E3C);
-            }
-            QPushButton#addButton:hover {
+            }}
+            QPushButton#addButton:hover {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #66BB6A, stop:1 #4CAF50);
-            }
-            QPushButton#removeButton {
+            }}
+            QPushButton#removeButton {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #e94560, stop:1 #c42847);
-            }
-            QPushButton#removeButton:hover {
+            }}
+            QPushButton#removeButton:hover {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #ff5577, stop:1 #e94560);
-            }
-            QPushButton#saveButton {
+            }}
+            QPushButton#saveButton {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #2196F3, stop:1 #1976D2);
-                min-width: 100px;
-            }
-            QPushButton#saveButton:hover {
+                min-width: {rem(6.25)}px;
+            }}
+            QPushButton#saveButton:hover {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #42A5F5, stop:1 #2196F3);
-            }
+            }}
         """
         )
 
@@ -155,8 +160,8 @@ class SubjectSettingsDialog(QtWidgets.QDialog):
         self.mappings = current_mappings.copy() if current_mappings else {}
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(rem(1.25), rem(1.25), rem(1.25), rem(1.25))
+        layout.setSpacing(rem(1))
 
         # 説明ラベル
         info_label = QtWidgets.QLabel(
@@ -181,7 +186,7 @@ class SubjectSettingsDialog(QtWidgets.QDialog):
 
         # ボタン群
         btn_layout = QtWidgets.QHBoxLayout()
-        btn_layout.setSpacing(12)
+        btn_layout.setSpacing(rem(0.75))
 
         add_btn = QtWidgets.QPushButton("➕ 行を追加")
         add_btn.setObjectName("addButton")

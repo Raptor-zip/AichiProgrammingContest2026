@@ -44,6 +44,119 @@ from ui_components import SubjectSettingsDialog, ToastNotification
 
 
 class CameraWindow(QtWidgets.QMainWindow):
+
+    def rem(self, n: float) -> int:
+        """Convert rem units to pixels based on base font size"""
+        base_size = 16  # Base font size in pixels
+        return int(n * base_size)
+
+    def _init_ui_style(self):
+        """Initialize UI style with relative units"""
+        # モダンなデザインのスタイルシートを適用
+        self.setStyleSheet(
+            f"""
+            QWidget {{
+                font-family: "Noto Sans CJK JP", "Yu Gothic", "Meiryo", sans-serif;
+                font-size: {self.rem(1)}px;
+            }}
+            QMainWindow {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1a1a2e, stop:1 #16213e);
+            }}
+            QLabel#videoLabel {{
+                background-color: #0f3460;
+                border-radius: {self.rem(0.75)}px;
+                border: {self.rem(0.125)}px solid #533483;
+                padding: {self.rem(0.5)}px;
+            }}
+            QPushButton {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #533483, stop:1 #3d2564);
+                color: white;
+                border: none;
+                border-radius: {self.rem(0.5)}px;
+                padding: {self.rem(0.75)}px {self.rem(1.5)}px;
+                font-size: {self.rem(0.875)}px;
+                font-weight: normal;
+                min-width: {self.rem(5)}px;
+            }}
+            QPushButton:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #6b4397, stop:1 #533483);
+            }}
+            QPushButton:pressed {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3d2564, stop:1 #2d1a4c);
+                padding-top: {self.rem(0.875)}px;
+            }}
+            QPushButton#settingsButton {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #e94560, stop:1 #c42847);
+            }}
+            QPushButton#settingsButton:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #ff5577, stop:1 #e94560);
+            }}
+            QPushButton#quitButton {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #757575, stop:1 #5a5a5a);
+            }}
+            QPushButton#quitButton:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #8a8a8a, stop:1 #707070);
+            }}
+            QListWidget::item {{
+                padding: {self.rem(0.25)}px;
+                border-bottom: {self.rem(0.0625)}px solid #533483;
+            }}
+            QPushButton#wbToggleOn {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4CAF50, stop:1 #388E3C);
+            }}
+            QPushButton#wbToggleOn:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #66BB6A, stop:1 #4CAF50);
+            }}
+            QPushButton#wbToggleOff {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #757575, stop:1 #5a5a5a);
+            }}
+            QPushButton#wbToggleOff:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #8a8a8a, stop:1 #707070);
+            }}
+            QPushButton#resumeButton {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2196F3, stop:1 #1976D2);
+            }}
+            QPushButton#resumeButton:hover {{
+                background: #4CAF50;
+            }}
+            QPushButton#aiButton {{
+                background: #9C27B0;
+            }}
+            QPushButton#aiButton:hover {{
+                background: #7B1FA2;
+            }}
+            QPushButton#aiButton:disabled {{
+                background: #666666;
+                color: #999999;
+            }}
+            QTextEdit {{
+                background-color: #16213e;
+                color: #e0e0e0;
+                border: {self.rem(0.125)}px solid #533483;
+                border-radius: {self.rem(0.5)}px;
+                padding: {self.rem(0.75)}px;
+                font-size: {self.rem(0.8125)}px;
+                selection-background-color: #533483;
+            }}
+            QTextEdit:focus {{
+                border: {self.rem(0.125)}px solid #6b4397;
+            }}
+        """
+        )
+
     def __init__(self, debug_mode=False):
         super().__init__()
 
@@ -59,104 +172,8 @@ class CameraWindow(QtWidgets.QMainWindow):
         if os.path.exists(icon_path):
             self.setWindowIcon(QtGui.QIcon(icon_path))
 
-        # モダンなデザインのスタイルシートを適用
-        self.setStyleSheet(
-            """
-            QMainWindow {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1a1a2e, stop:1 #16213e);
-            }
-            QLabel#videoLabel {
-                background-color: #0f3460;
-                border-radius: 12px;
-                border: 2px solid #533483;
-                padding: 8px;
-            }
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #533483, stop:1 #3d2564);
-                color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 12px 24px;
-                font-size: 14px;
-                font-weight: normal;
-                min-width: 100px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #6b4397, stop:1 #533483);
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #3d2564, stop:1 #2d1a4c);
-                padding-top: 14px;
-            }
-            QPushButton#settingsButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #e94560, stop:1 #c42847);
-            }
-            QPushButton#settingsButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ff5577, stop:1 #e94560);
-            }
-            QPushButton#quitButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #757575, stop:1 #5a5a5a);
-            }
-            QPushButton#quitButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #8a8a8a, stop:1 #707070);
-            }
-            QPushButton#wbToggleOn {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #4CAF50, stop:1 #388E3C);
-            }
-            QPushButton#wbToggleOn:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #66BB6A, stop:1 #4CAF50);
-            }
-            QPushButton#wbToggleOff {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #757575, stop:1 #5a5a5a);
-            }
-            QPushButton#wbToggleOff:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #8a8a8a, stop:1 #707070);
-            }
-            QPushButton#resumeButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2196F3, stop:1 #1976D2);
-            }
-            QPushButton#resumeButton:hover {
-                background: #4CAF50;
-            }
+        self._init_ui_style()
 
-            QPushButton#aiButton {
-                background: #9C27B0;
-            }
-            QPushButton#aiButton:hover {
-                background: #7B1FA2;
-            }
-            QPushButton#aiButton:disabled {
-                background: #666666;
-                color: #999999;
-            }
-            QTextEdit {
-                background-color: #16213e;
-                color: #e0e0e0;
-                border: 2px solid #533483;
-                border-radius: 8px;
-                padding: 12px;
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 13px;
-                selection-background-color: #533483;
-            }
-            QTextEdit:focus {
-                border: 2px solid #6b4397;
-            }
-        """
-        )
 
         # デバッグモード
         self.debug_mode = debug_mode
@@ -262,7 +279,7 @@ class CameraWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.video_label)
 
         controls = QtWidgets.QHBoxLayout()
-        controls.setSpacing(12)
+        controls.setSpacing(self.rem(0.75))
         layout.addLayout(controls)
 
         # 教科設定ボタン
@@ -296,8 +313,8 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.white_balance_enabled = wb_default
 
         spacer = QtWidgets.QSpacerItem(
-            40,
-            20,
+            self.rem(2.5),
+            self.rem(1.25),
             QtWidgets.QSizePolicy.Policy.Expanding,
             QtWidgets.QSizePolicy.Policy.Minimum,
         )
@@ -311,23 +328,18 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.resume_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         controls.addWidget(self.resume_btn)
 
-        # OCR の結果などを表示するテキスト領域
-        self.ocr_output = QtWidgets.QTextEdit()
-        self.ocr_output.setReadOnly(True)
-        self.ocr_output.setMaximumHeight(
-            self.config.get_ocr_output_max_height())
-        self.ocr_output.setPlaceholderText("OCR結果がここに表示されます...")
-        layout.addWidget(self.ocr_output)
+
 
         # --- AI画面を作成 (画面遷移用) ---
         self.ai_page = QtWidgets.QWidget()
         ai_layout = QtWidgets.QVBoxLayout(self.ai_page)
-        ai_layout.setContentsMargins(20, 20, 20, 20)
-        ai_layout.setSpacing(12)
+        ai_layout.setContentsMargins(self.rem(1.25), self.rem(1.25), self.rem(1.25), self.rem(1.25))
+        ai_layout.setSpacing(self.rem(0.75))
 
         ai_title = QtWidgets.QLabel("📚 過去の撮影履歴")
+        ai_title.setFixedHeight(self.rem(1.875))  # 高さを固定して無駄なスペースを排除
         ai_title.setStyleSheet(
-            "font-size:18px; color: #e0e0e0; font-weight: bold;")
+            f"font-size:{{self.rem(1)}}px; color: #e0e0e0; font-weight: bold; padding: 0px; margin: 0px;")
         ai_layout.addWidget(ai_title)
 
         # 水平分割: 左側にリスト、右側に詳細表示
@@ -345,25 +357,25 @@ class CameraWindow(QtWidgets.QMainWindow):
         filter_layout.addWidget(filter_label)
 
         self.subject_filter = QtWidgets.QComboBox()
-        self.subject_filter.setStyleSheet("""
-            QComboBox {
+        self.subject_filter.setStyleSheet(f"""
+            QComboBox {{
                 background-color: #16213e;
                 color: #e0e0e0;
-                border: 2px solid #533483;
-                border-radius: 4px;
-                padding: 4px;
-            }
-            QComboBox:hover {
-                border: 2px solid #6b4397;
-            }
-            QComboBox::drop-down {
+                border: {self.rem(0.125)}px solid #533483;
+                border-radius: {self.rem(0.25)}px;
+                padding: {self.rem(0.25)}px;
+            }}
+            QComboBox:hover {{
+                border: {self.rem(0.125)}px solid #6b4397;
+            }}
+            QComboBox::drop-down {{
                 border: none;
-            }
-            QComboBox QAbstractItemView {
+            }}
+            QComboBox QAbstractItemView {{
                 background-color: #16213e;
                 color: #e0e0e0;
                 selection-background-color: #533483;
-            }
+            }}
         """)
         self.subject_filter.currentTextChanged.connect(
             self.filter_captures_by_subject)
@@ -373,25 +385,25 @@ class CameraWindow(QtWidgets.QMainWindow):
 
         # 撮影履歴リスト
         self.capture_list = QtWidgets.QListWidget()
-        self.capture_list.setStyleSheet("""
-            QListWidget {
+        self.capture_list.setStyleSheet(f"""
+            QListWidget {{
                 background-color: #16213e;
                 color: #e0e0e0;
-                border: 2px solid #533483;
-                border-radius: 8px;
-                padding: 4px;
-                font-size: 13px;
-            }
-            QListWidget::item {
-                padding: 8px;
-                border-bottom: 1px solid #533483;
-            }
-            QListWidget::item:selected {
+                border: {self.rem(0.125)}px solid #533483;
+                border-radius: {self.rem(0.5)}px;
+                padding: {self.rem(0.25)}px;
+                font-size: {self.rem(0.8125)}px;
+            }}
+            QListWidget::item {{
+                padding: {self.rem(0.25)}px {self.rem(0.5)}px;
+                border-bottom: {self.rem(0.0625)}px solid #533483;
+            }}
+            QListWidget::item:selected {{
                 background-color: #533483;
-            }
-            QListWidget::item:hover {
+            }}
+            QListWidget::item:hover {{
                 background-color: #3d2564;
-            }
+            }}
         """)
         self.capture_list.itemSelectionChanged.connect(
             self.on_capture_selected)
@@ -407,14 +419,14 @@ class CameraWindow(QtWidgets.QMainWindow):
         # 画像プレビュー
         self.preview_label = QtWidgets.QLabel("画像を選択してください")
         self.preview_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setStyleSheet("""
-            QLabel {
-                background-color: #0f3460;
-                border: 2px solid #533483;
-                border-radius: 8px;
-                color: #808080;
-                min-height: 300px;
-            }
+        self.preview_label.setStyleSheet(f"""
+             QLabel {{
+                 background-color: #0f3460;
+                 border: {self.rem(0.125)}px solid #533483;
+                 border-radius: {self.rem(0.5)}px;
+                 color: #808080;
+                 min-height: {self.rem(6.25)}px;
+             }}
         """)
         self.preview_label.setScaledContents(False)
         right_layout.addWidget(self.preview_label, stretch=3)
@@ -459,8 +471,8 @@ class CameraWindow(QtWidgets.QMainWindow):
             }
         """)
         mode_bar_layout = QtWidgets.QHBoxLayout(mode_bar)
-        mode_bar_layout.setContentsMargins(10, 5, 10, 5)
-        mode_bar_layout.setSpacing(10)
+        mode_bar_layout.setContentsMargins(self.rem(0.625), self.rem(0.3125), self.rem(0.625), self.rem(0.3125))
+        mode_bar_layout.setSpacing(self.rem(0.625))
 
         # モード切替ボタン
         self.camera_mode_btn = QtWidgets.QPushButton("📷 撮影モード")
@@ -469,23 +481,23 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.camera_mode_btn.clicked.connect(self.show_camera_page)
         self.camera_mode_btn.setCursor(
             QtCore.Qt.CursorShape.PointingHandCursor)
-        self.camera_mode_btn.setStyleSheet("""
-            QPushButton {
+        self.camera_mode_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #2196F3;
                 color: white;
                 border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-size: 13px;
+                border-radius: {self.rem(0.25)}px;
+                padding: {self.rem(0.5)}px {self.rem(1)}px;
+                font-size: {self.rem(0.8125)}px;
                 font-weight: bold;
-            }
-            QPushButton:checked {
+            }}
+            QPushButton:checked {{
                 background-color: #1976D2;
-                border: 2px solid #64B5F6;
-            }
-            QPushButton:hover {
+                border: {self.rem(0.125)}px solid #64B5F6;
+            }}
+            QPushButton:hover {{
                 background-color: #42A5F5;
-            }
+            }}
         """)
         mode_bar_layout.addWidget(self.camera_mode_btn)
 
@@ -494,28 +506,28 @@ class CameraWindow(QtWidgets.QMainWindow):
         self.ai_mode_btn.setChecked(False)
         self.ai_mode_btn.clicked.connect(self.show_ai_page)
         self.ai_mode_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        self.ai_mode_btn.setStyleSheet("""
-            QPushButton {
+        self.ai_mode_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #9C27B0;
                 color: white;
                 border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-size: 13px;
+                border-radius: {self.rem(0.25)}px;
+                padding: {self.rem(0.5)}px {self.rem(1)}px;
+                font-size: {self.rem(0.8125)}px;
                 font-weight: bold;
-            }
-            QPushButton:checked {
+            }}
+            QPushButton:checked {{
                 background-color: #7B1FA2;
-                border: 2px solid #CE93D8;
-            }
-            QPushButton:hover {
+                border: {self.rem(0.125)}px solid #CE93D8;
+            }}
+            QPushButton:hover {{
                 background-color: #AB47BC;
-            }
+            }}
         """)
         mode_bar_layout.addWidget(self.ai_mode_btn)
         # ボタンサイズを統一（高さと最小幅）
-        uniform_height = 36
-        uniform_min_width = 120
+        uniform_height = self.rem(2.25)
+        uniform_min_width = self.rem(7.5)
         try:
             self.camera_mode_btn.setFixedHeight(uniform_height)
             self.camera_mode_btn.setMinimumWidth(uniform_min_width)
@@ -847,6 +859,17 @@ class CameraWindow(QtWidgets.QMainWindow):
             output_dpi=self.config.get_aruco_output_dpi(),
         )
 
+        # 画像サイズが大きくなりすぎるから、2000*2000 を超える場合はリサイズする
+        # max_dimension = self.config.get_max_output_dimension()
+        max_dimension = 2000
+        if (perspective_frame is not None and
+            (perspective_frame.shape[0] > max_dimension or
+             perspective_frame.shape[1] > max_dimension)):
+            scale_factor = max_dimension / \
+                max(perspective_frame.shape[0], perspective_frame.shape[1])
+            perspective_frame = cv2.resize(
+                perspective_frame, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_AREA)
+
         # 台形補正が成功した場合はその画像を使用、失敗した場合は元の画像を使用
         if perspective_frame is not None:
             processing_frame = perspective_frame
@@ -891,22 +914,23 @@ class CameraWindow(QtWidgets.QMainWindow):
         if paper_corners is not None:
             pts = paper_corners.astype(int)
             # 線を描く
-            cv2.polylines(overlay, [pts], isClosed=True,
-                          color=(0, 255, 0), thickness=3)
-            # 四隅に小さい円を描画
-            for x, y in pts:
-                cv2.circle(overlay, (int(x), int(y)), 6, (0, 255, 0), -1)
+            # cv2.polylines(overlay, [pts], isClosed=True,
+            #   color=(0, 255, 0), thickness=3)
+            # # 四隅に小さい円を描画
+            # for x, y in pts:
+            #     cv2.circle(overlay, (int(x), int(y)), 6, (0, 255, 0), -1)
 
         # ハフ変換で直線検出
         try:
-            lines = cv2.HoughLinesP(
-                edges,
-                1,
-                np.pi / 180,
-                threshold=self.config.get_hough_threshold(),
-                minLineLength=self.config.get_hough_min_line_length(),
-                maxLineGap=self.config.get_hough_max_line_gap(),
-            )
+            lines = None
+            # lines = cv2.HoughLinesP(
+            #     edges,
+            #     1,
+            #     np.pi / 180,
+            #     threshold=self.config.get_hough_threshold(),
+            #     minLineLength=self.config.get_hough_min_line_length(),
+            #     maxLineGap=self.config.get_hough_max_line_gap(),
+            # )
         except Exception:
             lines = None
 

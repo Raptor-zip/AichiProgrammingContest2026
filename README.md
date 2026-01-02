@@ -51,6 +51,8 @@ ollama pull gemma2:9b
 
 **通常モード:**
 ```bash
+ollama run gemma2:2b
+
 python main.py
 ```
 
