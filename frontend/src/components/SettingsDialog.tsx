@@ -38,9 +38,9 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                 body: JSON.stringify({ mappings })
             });
             onClose();
-            alert("Settings saved!");
+            alert("設定を保存しました！");
         } catch (e) {
-            alert("Failed to save settings");
+            alert("設定の保存に失敗しました");
         }
     };
 
@@ -65,15 +65,15 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
             <div className="bg-dark-surface w-full max-w-2xl rounded-lg shadow-2xl border border-primary p-6">
-                <h2 className="text-2xl font-bold mb-4 text-white">⚙️ Settings</h2>
+                <h2 className="text-2xl font-bold mb-4 text-white">⚙️ 設定</h2>
 
                 <div className="max-h-96 overflow-y-auto mb-4 border border-gray-700 rounded bg-dark-bg p-2">
                     <table className="w-full text-left text-sm">
                         <thead className="text-gray-400 border-b border-gray-700">
                             <tr>
-                                <th className="p-2">Marker ID</th>
-                                <th className="p-2">Subject Name</th>
-                                <th className="p-2">Action</th>
+                                <th className="p-2">マーカーID</th>
+                                <th className="p-2">教科名</th>
+                                <th className="p-2">操作</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -111,7 +111,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                         </tbody>
                     </table>
 
-                    {Object.keys(mappings).length === 0 && <div className="p-4 text-center text-gray-500">No mappings set.</div>}
+                    {Object.keys(mappings).length === 0 && <div className="p-4 text-center text-gray-500">マッピングが設定されていません。</div>}
                 </div>
 
                 <div className="flex justify-between items-center">
@@ -119,7 +119,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                         onClick={addMapping}
                         className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded text-sm"
                     >
-                        ➕ Add Row
+                        ➕ 追加
                     </button>
 
                     <div className="space-x-2">
@@ -127,13 +127,13 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                             onClick={onClose}
                             className="px-4 py-2 rounded hover:bg-gray-700 text-gray-300"
                         >
-                            Cancel
+                            キャンセル
                         </button>
                         <button
                             onClick={handleSave}
                             className="bg-primary hover:bg-primary-hover text-white px-6 py-2 rounded font-bold shadow"
                         >
-                            💾 Save
+                            💾 保存
                         </button>
                     </div>
                 </div>

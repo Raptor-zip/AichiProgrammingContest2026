@@ -11,9 +11,6 @@ if __name__ == "__main__":
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from config_loader import get_config
-from image_processing import (
-    auto_white_balance,
-)
 import cv2.aruco as aruco
 
 class CameraManager:
@@ -35,10 +32,10 @@ class CameraManager:
         # Auto-capture state
         self.last_marker_time = 0.0
         self.auto_capture_triggered = False
-        self.auto_capture_triggered = False
         self.on_capture_callback = None
         self.capture_flash_time = 0.0 # Time when capture happened for visual feedback
         self.current_progress = 0.0 # For progress bar visualization
+        self.cooldown_end_time = 0.0 # Cooldown period after capture
 
         # Threading support
         self.running = False
@@ -114,16 +111,20 @@ class CameraManager:
     def check_auto_capture(self, frame):
         """Check markers and trigger capture if stable"""
         try:
-            # We need to detect markers here for logic,
-            # even if we also do it for visualization in stream.
-            # Optimization: Cache the detection result?
-            # For now, let's just detect. It might be redundant with stream processing
-            # but safer for decoupled logic.
+            cur_time = time.time()
+
+            # Check if in cooldown period
+            if cur_time < self.cooldown_end_time:
+                # During cooldown, reset state and skip detection
+                self.current_progress = 0.0
+                self.auto_capture_triggered = False
+                self.last_marker_time = 0
+                return
+
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             corners, ids, _ = self.detector.detectMarkers(gray)
 
             if ids is not None and len(ids) > 0:
-                cur_time = time.time()
                 if self.last_marker_time == 0:
                     self.last_marker_time = cur_time
 
@@ -134,25 +135,24 @@ class CameraManager:
                     if not self.auto_capture_triggered:
                         print(f"Auto-capture triggered! (stable for {elapsed:.0f}ms)")
                         self.auto_capture_triggered = True
-                        self.capture_flash_time = time.time() # Trigger flash
+                        self.capture_flash_time = cur_time
+
                         if self.on_capture_callback:
-                            # Invoke callback with copy of frame and detected IDs
-                            # ids is usually [[id]], so we might want to flatten or pass as is
-                            # Let's pass the raw ids array (numpy) or list
                             detected_ids = ids.flatten().tolist() if ids is not None else []
-                            # Pass corners as list of lists (or similar structure compatible with JSON/simple passing)
-                            # corners is tuple of arrays. image_processing expects list of arrays or tuple of arrays.
-                            # We'll pass it as is (list of numpy arrays) inside the thread.
                             detected_corners = [c.tolist() for c in corners] if corners else []
                             self.on_capture_callback(frame.copy(), detected_ids, detected_corners)
+
+                        # Start cooldown period
+                        cooldown_ms = self.config.get_capture_cooldown_ms()
+                        self.cooldown_end_time = cur_time + (cooldown_ms / 1000.0)
                 else:
                     # Update progress
                     self.current_progress = elapsed / self.config.get_auto_capture_delay_ms()
+                    self.auto_capture_triggered = False
             else:
                 self.last_marker_time = 0
                 self.current_progress = 0.0
                 self.auto_capture_triggered = False
-
 
         except Exception as e:
             print(f"Error in auto-capture logic: {e}")
@@ -175,15 +175,23 @@ class CameraManager:
         # Copy to avoid modifying the original for other uses if needed
         display_frame = frame.copy()
 
-        # ArUco detection (simplified adaptation from main.py)
+        # Resize for streaming (max 800px width for performance)
+        h, w = display_frame.shape[:2]
+        max_width = 800
+        if w > max_width:
+            scale = max_width / w
+            display_frame = cv2.resize(display_frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+
+        # ArUco detection on resized frame
         gray = cv2.cvtColor(display_frame, cv2.COLOR_BGR2GRAY)
         corners, ids, _ = self.detector.detectMarkers(gray)
 
         if ids is not None and len(ids) > 0:
             aruco.drawDetectedMarkers(display_frame, corners, ids)
 
-        # JPEG encoding
-        ret, buffer = cv2.imencode('.jpg', display_frame)
+        # JPEG encoding with lower quality for faster streaming
+        encode_params = [cv2.IMWRITE_JPEG_QUALITY, 65]
+        ret, buffer = cv2.imencode('.jpg', display_frame, encode_params)
         if not ret:
             return b""
         return buffer.tobytes()
@@ -193,7 +201,7 @@ class CameraManager:
         while True:
             frame = self.get_frame()
             if frame is None:
-                time.sleep(0.1)
+                time.sleep(0.05)
                 continue
 
             jpeg_bytes = self.process_frame_for_stream(frame)
@@ -203,8 +211,8 @@ class CameraManager:
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + jpeg_bytes + b'\r\n')
 
-            # Control framerate roughly
-            time.sleep(self.config.get_frame_interval_ms() / 1000.0)
+            # Minimal sleep to allow other tasks (target ~30fps)
+            time.sleep(0.01)
 
 
     def set_capture_callback(self, callback):

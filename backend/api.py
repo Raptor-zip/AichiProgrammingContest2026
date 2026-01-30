@@ -12,17 +12,10 @@ from typing import List, Optional, Dict, Any
 import sys
 import threading
 import asyncio
-import asyncio
-
-# Add root to path for imports if needed (already in main.py but good for linting)
-# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from config_loader import get_config
 from image_processing import (
-    auto_white_balance,
-    calculate_marker_rotation,
-    correct_rotation,
-    perspective_transform_from_marker,
+    process_with_green_background,
 )
 
 router = APIRouter()
@@ -42,6 +35,16 @@ class OCRRequest(BaseModel):
 class StudyRequest(BaseModel):
     text: str
     type: str  # "explain" or "problem"
+    context: Optional[str] = None  # Full document context
+
+class ChatMessage(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+
+class ChatRequest(BaseModel):
+    message: str
+    history: List[dict]  # List of {role, content}
+    context: Optional[str] = None  # Document context
 
 @router.get("/stream")
 async def video_stream():
@@ -53,28 +56,6 @@ async def video_stream():
 
 @router.get("/status")
 async def get_status():
-    return {"status": "ok", "camera_connected": camera_manager.cap is not None}
-
-    return {"status": "ok", "camera_connected": camera_manager.cap is not None}
-
-@router.get("/capture_status")
-async def capture_status_stream(request: Request):
-    """SSE stream for capture status"""
-    async def event_generator():
-        while True:
-            if await request.is_disconnected():
-                break
-
-            # Get state
-            progress = camera_manager.current_progress
-            triggered = camera_manager.auto_capture_triggered
-
-            data = json.dumps({"progress": progress, "triggered": triggered})
-            yield f"data: {data}\n\n"
-            await asyncio.sleep(0.05) # 20fps updates
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
-
     return {"status": "ok", "camera_connected": camera_manager.cap is not None}
 
 @router.get("/capture_status")
@@ -102,20 +83,24 @@ async def capture_image(background_tasks: BackgroundTasks):
     if frame is None:
         raise HTTPException(status_code=503, detail="Camera not available")
 
-    # Deep copy for processing
-    process_frame = frame.copy()
-
-    # Optional: Logic from main.py's take_picture / process flow could be applied here
-    # For now, just save the raw or simple processed frame.
-    # If we want the "AI processing" flow from the desktop app:
-    # 1. ArUco detection -> 2. Rotation/Perspective -> 3. Save
-
-    # We will use helper logic directly here or in a helper function
-    # Adapt logic from main.py (automatic processing often happens for OCR, but raw capture is good too)
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"capture_{timestamp}.jpg"
     filepath = os.path.join(CAPTURES_DIR, filename)
+
+    # Save original
+    original_filename = f"capture_{timestamp}_original.jpg"
+    original_filepath = os.path.join(CAPTURES_DIR, original_filename)
+    cv2.imwrite(original_filepath, frame)
+
+    # Process with green background detection
+    process_frame, success = process_with_green_background(frame, enhance=True)
+
+    # Resize if too large
+    max_dim = 2000
+    h, w = process_frame.shape[:2]
+    if h > max_dim or w > max_dim:
+        scale = max_dim / max(h, w)
+        process_frame = cv2.resize(process_frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
     cv2.imwrite(filepath, process_frame)
 
@@ -206,12 +191,22 @@ async def study_support(request: StudyRequest):
 
     result = ""
     if request.type == "explain":
-        result = llm_service.explain_text(request.text)
+        result = llm_service.explain_text(request.text, request.context)
     elif request.type == "problem":
-        result = llm_service.create_problems(request.text)
+        result = llm_service.create_problems(request.text, request.context)
     else:
         raise HTTPException(status_code=400, detail="Invalid support type")
 
+    return {"content": result}
+
+
+@router.post("/chat")
+async def chat_with_ai(request: ChatRequest):
+    """Continue a conversation with AI"""
+    if not request.message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    result = llm_service.chat(request.message, request.history, request.context)
     return {"content": result}
 
 
@@ -323,7 +318,7 @@ def glob_captures():
     # Walk through directory
     for root, dirs, files_in_dir in os.walk(CAPTURES_DIR):
         for f in files_in_dir:
-            if f.lower().endswith(('.jpg', '.jpeg', '.png')) and not f.endswith('_ocr.jpg'):
+            if f.lower().endswith(('.jpg', '.jpeg', '.png')) and not f.endswith('_ocr.jpg') and not f.endswith('_original.jpg'):
                 full_path = os.path.join(root, f)
                 # Get relative path for URL (e.g., "Math/capture.jpg")
                 rel_path = os.path.relpath(full_path, CAPTURES_DIR)
@@ -411,89 +406,20 @@ def manual_trigger_auto_capture(frame: np.ndarray, detected_ids: List[int] = [],
         original_filepath = os.path.join(target_dir, original_filename)
         cv2.imwrite(original_filepath, frame)
 
-        # --- Image Processing ---
-        processing_frame = frame.copy()
+        # --- Image Processing with Green Background Detection ---
+        processing_frame, success = process_with_green_background(frame, enhance=True)
 
-        # Convert corners back to numpy if needed
-        # detected_corners comes from tolist(), so it is list of list of list
-        # We need numpy arrays for cv2 functions usually
-        np_corners = [np.array(c, dtype=np.float32) for c in detected_corners]
+        if success:
+            print(f"[GreenDetect] Paper detected and transformed successfully")
+        else:
+            print(f"[GreenDetect] Paper detection failed, using enhanced original")
 
-        # 1. Perspective Transform
-        if np_corners:
-            perspective_frame, _, _, _ = perspective_transform_from_marker(
-                processing_frame,
-                np_corners,
-                marker_size_mm=config.get_aruco_marker_size_mm() or 50, # fallback default
-                output_dpi=300
-            )
-
-            if perspective_frame is not None:
-                # Resize if too big (2000x2000 limit)
-                max_dim = 2000
-                h, w = perspective_frame.shape[:2]
-                if h > max_dim or w > max_dim:
-                    scale = max_dim / max(h, w)
-                    perspective_frame = cv2.resize(perspective_frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-
-                processing_frame = perspective_frame
-
-        # 2. Rotation Correction
-        if np_corners:
-            angle = calculate_marker_rotation(np_corners)
-            processing_frame, _ = correct_rotation(processing_frame, angle)
-
-        # 3. Auto White Balance (enabled by default in original main.py per config)
-        if np_corners: # WB needs corners to find white/black ref on marker
-             # Note: if we transformed, corners might not match transformed image validly for WB
-             # UNLESS WB expects original image + corners.
-             # image_processing.auto_white_balance(image, corners) logic:
-             # It uses corners[0] to find marker.
-             # If we use perspective transformed image, the marker is heavily distorted/gone or at top left?
-             # Actually, usually WB is done on the ORIGINAL image or logic needs to adapt.
-             # But if perspective_transform returns the crop of the paper, the marker might be outside or inside?
-             # Let's look at image_processing.py again. WB uses marker to find black/white.
-             # If we do WB on original frame FIRST, then transform, it's safer.
-             pass
-
-        # Let's re-order: WB first on original frame?
-        # Re-doing logic:
-        # (A) WB on Original Frame -> (B) Perspective Transform -> (C) Rotation
-        # WB modifies the frame colors.
-
-        frame_for_wb = frame.copy()
-        if np_corners and config.get_white_balance_enabled_by_default():
-            frame_wb, _, _, _ = auto_white_balance(frame_for_wb, np_corners)
-            if frame_wb is not None:
-                processing_frame = frame_wb
-
-        # Now Transform
-        if np_corners:
-             p_frame, _, _, _ = perspective_transform_from_marker(
-                processing_frame,
-                np_corners,
-                marker_size_mm=config.get_aruco_marker_size_mm() or 50,
-                output_dpi=300
-             )
-             if p_frame is not None:
-                 # Resize
-                 max_dim = 2000
-                 h, w = p_frame.shape[:2]
-                 if h > max_dim or w > max_dim:
-                    scale = max_dim / max(h, w)
-                    p_frame = cv2.resize(p_frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-                 processing_frame = p_frame
-
-        # Rotation (Usually perspective transform aligns it, but correct_rotation snaps to 90 degrees)
-        # Perspective transform aligns to marker orientation. Marker might be rotated 90 deg.
-        if np_corners:
-             angle = calculate_marker_rotation(np_corners)
-             # Note: calculate_marker_rotation uses corners of original image.
-             # If perspective transform aligned it to be "upright" relative to marker,
-             # we might need to check if marker itself was rotated relative to paper?
-             # Usually correct_rotation aligns it to 90 deg steps.
-             processing_frame, _ = correct_rotation(processing_frame, angle)
-
+        # Resize if too large
+        max_dim = 2000
+        h, w = processing_frame.shape[:2]
+        if h > max_dim or w > max_dim:
+            scale = max_dim / max(h, w)
+            processing_frame = cv2.resize(processing_frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
         # Save image
         cv2.imwrite(filepath, processing_frame)

@@ -116,10 +116,11 @@ class ConfigLoader:
 
     def get_auto_capture_delay_ms(self) -> int:
         """自動撮影の遅延時間（ミリ秒）を取得"""
-        # Alias if needed, or ensure key matches config.yaml structure
-        # In config.yaml it is under 'aruco' -> 'auto_capture_delay_ms'
-        # The previous attempt might have failed if name mismatch or simple typo in caller
-        return self.get("aruco", "auto_capture_delay_ms", default=800)
+        return self.get("aruco", "auto_capture_delay_ms", default=2000)
+
+    def get_capture_cooldown_ms(self) -> int:
+        """撮影後のクールダウン時間（ミリ秒）を取得"""
+        return self.get("aruco", "capture_cooldown_ms", default=3000)
 
     def get_gemini_api_key(self) -> str:
         """Gemini APIキーを取得"""

@@ -54,7 +54,7 @@ export const CaptureHud: React.FC<CaptureHudProps> = ({ progress, triggered }) =
                 {/* Center Text */}
                 <div className="absolute text-center">
                     {triggered ? (
-                        <div className="text-green-400 font-bold text-lg animate-bounce">CAPTURED</div>
+                        <div className="text-green-400 font-bold text-lg animate-bounce">撮影完了</div>
                     ) : (
                         <div className="text-secondary font-mono text-xl font-bold">
                             {(progress * 100).toFixed(0)}%
@@ -65,8 +65,8 @@ export const CaptureHud: React.FC<CaptureHudProps> = ({ progress, triggered }) =
 
             {/* Status Text at Bottom */}
             {!triggered && (
-                <div className="absolute bottom-20 text-secondary-light font-mono text-sm tracking-widest uppercase animate-pulse">
-                    Target Locked... Stabilize
+                <div className="absolute bottom-20 text-secondary-light font-mono text-sm tracking-widest animate-pulse">
+                    マーカー検出中... 安定させてください
                 </div>
             )}
         </div>

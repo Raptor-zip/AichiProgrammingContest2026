@@ -16,10 +16,11 @@ interface OCRBlock {
 interface ImageOverlayProps {
     src: string;
     ocrData: any; // Flexible for now
-    onTextClickTrigger?: (text: string, e: React.MouseEvent) => void;
+    selectedIndices?: Set<number>; // For multiple selection
+    onTextClickTrigger?: (index: number, text: string, e: React.MouseEvent) => void;
 }
 
-export const ImageOverlay: React.FC<ImageOverlayProps> = ({ src, ocrData, onTextClickTrigger }) => {
+export const ImageOverlay: React.FC<ImageOverlayProps> = ({ src, ocrData, selectedIndices = new Set(), onTextClickTrigger }) => {
     const [imgSize, setImgSize] = useState<{ w: number, h: number } | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
@@ -104,10 +105,16 @@ export const ImageOverlay: React.FC<ImageOverlayProps> = ({ src, ocrData, onText
             const width = (w / imgSize.w) * 100;
             const height = (h / imgSize.h) * 100;
 
+            const isSelected = selectedIndices.has(idx);
+
             return (
                 <div
                     key={idx}
-                    className="absolute border border-red-500 bg-red-500 bg-opacity-10 hover:bg-opacity-30 cursor-pointer group z-10"
+                    className={`absolute border-2 cursor-pointer group z-10 transition-all ${
+                        isSelected
+                            ? 'border-green-400 bg-green-400 bg-opacity-30 shadow-[0_0_10px_rgba(74,222,128,0.5)]'
+                            : 'border-red-500 bg-red-500 bg-opacity-10 hover:bg-opacity-30'
+                    }`}
                     style={{
                         left: `${left}%`,
                         top: `${top}%`,
@@ -116,10 +123,13 @@ export const ImageOverlay: React.FC<ImageOverlayProps> = ({ src, ocrData, onText
                     }}
                     onClick={(e) => {
                         e.stopPropagation();
-                        onTextClickTrigger && onTextClickTrigger(text, e);
+                        onTextClickTrigger && onTextClickTrigger(idx, text, e);
                     }}
                     title={text}
                 >
+                    {isSelected && (
+                        <span className="absolute -top-1 -right-1 w-4 h-4 bg-green-400 rounded-full flex items-center justify-center text-[10px] text-black font-bold">✓</span>
+                    )}
                     <span className="absolute bottom-full left-0 bg-black bg-opacity-75 text-white text-xs px-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none z-20">
                         {text}
                     </span>

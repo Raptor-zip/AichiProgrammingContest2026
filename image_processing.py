@@ -2,12 +2,465 @@
 画像処理関連の関数
 - ホワイトバランス補正
 - 回転補正
+- 緑背景による紙検出・透視変換
 - デバッグ画像の描画
 """
 
 import cv2
 import numpy as np
-from typing import cast
+from typing import cast, Optional, Tuple
+
+
+def order_points(pts: np.ndarray) -> np.ndarray:
+    """
+    4点を左上、右上、右下、左下の順に並べ替える
+    """
+    rect = np.zeros((4, 2), dtype=np.float32)
+    s = pts.sum(axis=1)
+    rect[0] = pts[np.argmin(s)]  # 左上
+    rect[2] = pts[np.argmax(s)]  # 右下
+    d = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(d)]  # 右上
+    rect[3] = pts[np.argmax(d)]  # 左下
+    return rect
+
+
+def sample_edge_color(image: np.ndarray, sample_size: int = 20) -> np.ndarray:
+    """
+    画像の縁から緑色のサンプルを取得してHSV範囲を推定する
+    """
+    h, w = image.shape[:2]
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+    # 4辺からサンプルを取得
+    samples = []
+
+    # 上辺
+    samples.append(hsv[0:sample_size, :, :].reshape(-1, 3))
+    # 下辺
+    samples.append(hsv[h-sample_size:h, :, :].reshape(-1, 3))
+    # 左辺
+    samples.append(hsv[:, 0:sample_size, :].reshape(-1, 3))
+    # 右辺
+    samples.append(hsv[:, w-sample_size:w, :].reshape(-1, 3))
+
+    all_samples = np.vstack(samples)
+
+    # 緑色っぽいピクセルをフィルタリング（H: 35-85が緑系）
+    green_mask = (all_samples[:, 0] > 25) & (all_samples[:, 0] < 95) & (all_samples[:, 1] > 30)
+    green_samples = all_samples[green_mask]
+
+    if len(green_samples) < 100:
+        print(f"[GreenDetect] Not enough green samples: {len(green_samples)}")
+        return None
+
+    # 中央値を基準にHSV範囲を決定
+    h_median = np.median(green_samples[:, 0])
+    s_median = np.median(green_samples[:, 1])
+    v_median = np.median(green_samples[:, 2])
+
+    print(f"[GreenDetect] Green HSV median: H={h_median:.0f}, S={s_median:.0f}, V={v_median:.0f}")
+
+    return np.array([h_median, s_median, v_median])
+
+
+def detect_paper_on_green(image: np.ndarray) -> Optional[np.ndarray]:
+    """
+    緑色の背景から紙の4頂点を検出する
+
+    Returns:
+        検出した4点の座標 (4, 2) [左上、右上、右下、左下]、検出できない場合はNone
+    """
+    h, w = image.shape[:2]
+    print(f"[GreenDetect] Image size: {w}x{h}")
+
+    # 縁から緑色をサンプリング
+    green_hsv = sample_edge_color(image)
+    if green_hsv is None:
+        # フォールバック: 一般的な緑色範囲を使用
+        print("[GreenDetect] Using default green range")
+        lower_green = np.array([35, 40, 40])
+        upper_green = np.array([85, 255, 255])
+    else:
+        # サンプルから範囲を決定（±15の幅）
+        h_range = 20
+        s_range = 50
+        v_range = 80
+        lower_green = np.array([
+            max(0, green_hsv[0] - h_range),
+            max(30, green_hsv[1] - s_range),
+            max(30, green_hsv[2] - v_range)
+        ])
+        upper_green = np.array([
+            min(179, green_hsv[0] + h_range),
+            255,
+            255
+        ])
+        print(f"[GreenDetect] Green range: {lower_green} - {upper_green}")
+
+    # HSVに変換
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+    # 緑色マスクを作成
+    green_mask = cv2.inRange(hsv, lower_green, upper_green)
+
+    # モルフォロジー処理でノイズ除去と穴埋め
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_CLOSE, kernel, iterations=3)
+    green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, kernel, iterations=2)
+
+    # 緑色の反転 = 紙の領域（白い部分が紙）
+    paper_mask = cv2.bitwise_not(green_mask)
+
+    # さらにモルフォロジー処理
+    paper_mask = cv2.morphologyEx(paper_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    paper_mask = cv2.morphologyEx(paper_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    # 輪郭を検出
+    contours, _ = cv2.findContours(paper_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not contours:
+        print("[GreenDetect] No contours found")
+        return None
+
+    # 最大面積の輪郭を取得
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+    for contour in contours[:5]:
+        area = cv2.contourArea(contour)
+        min_area = h * w * 0.05  # 画像の5%以上
+
+        if area < min_area:
+            continue
+
+        # 輪郭を近似
+        peri = cv2.arcLength(contour, True)
+
+        for epsilon in [0.02, 0.03, 0.04, 0.05, 0.06]:
+            approx = cv2.approxPolyDP(contour, epsilon * peri, True)
+
+            if len(approx) == 4 and cv2.isContourConvex(approx):
+                pts = approx.reshape(4, 2).astype(np.float32)
+                ordered = order_points(pts)
+
+                # アスペクト比チェック
+                width1 = np.linalg.norm(ordered[1] - ordered[0])
+                width2 = np.linalg.norm(ordered[2] - ordered[3])
+                height1 = np.linalg.norm(ordered[3] - ordered[0])
+                height2 = np.linalg.norm(ordered[2] - ordered[1])
+
+                avg_width = (width1 + width2) / 2
+                avg_height = (height1 + height2) / 2
+
+                if avg_width == 0 or avg_height == 0:
+                    continue
+
+                aspect = max(avg_width, avg_height) / min(avg_width, avg_height)
+
+                if aspect < 3.0:  # 極端な形状を除外
+                    print(f"[GreenDetect] Found paper: area={area:.0f}, aspect={aspect:.2f}")
+                    return ordered
+
+    print("[GreenDetect] No valid quadrilateral found")
+    return None
+
+
+def perspective_transform_to_a4(
+    image: np.ndarray,
+    corners: np.ndarray,
+    orientation: str = "auto",
+    dpi: int = 150
+) -> Optional[np.ndarray]:
+    """
+    検出した4点からA4サイズに透視変換する
+
+    Args:
+        image: 入力画像
+        corners: 4点の座標 [左上、右上、右下、左下]
+        orientation: "portrait"（縦）, "landscape"（横）, "auto"（自動判定）
+        dpi: 出力解像度
+
+    Returns:
+        変換後の画像
+    """
+    if corners is None:
+        return None
+
+    # A4サイズ: 210mm x 297mm
+    a4_width_mm = 210
+    a4_height_mm = 297
+
+    # DPIからピクセルサイズを計算
+    mm_to_px = dpi / 25.4
+    a4_width_px = int(a4_width_mm * mm_to_px)
+    a4_height_px = int(a4_height_mm * mm_to_px)
+
+    # 自動で縦横を判定
+    if orientation == "auto":
+        width = np.linalg.norm(corners[1] - corners[0])
+        height = np.linalg.norm(corners[3] - corners[0])
+        if width > height:
+            orientation = "landscape"
+        else:
+            orientation = "portrait"
+
+    if orientation == "landscape":
+        output_width = a4_height_px
+        output_height = a4_width_px
+    else:
+        output_width = a4_width_px
+        output_height = a4_height_px
+
+    # 変換先の座標
+    dst_points = np.array([
+        [0, 0],
+        [output_width - 1, 0],
+        [output_width - 1, output_height - 1],
+        [0, output_height - 1]
+    ], dtype=np.float32)
+
+    # 透視変換行列を計算
+    matrix = cv2.getPerspectiveTransform(corners, dst_points)
+
+    # 透視変換を適用
+    transformed = cv2.warpPerspective(
+        image,
+        matrix,
+        (output_width, output_height),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255)
+    )
+
+    print(f"[GreenDetect] Transformed to {output_width}x{output_height} ({orientation})")
+    return transformed
+
+
+def auto_enhance_document(image: np.ndarray) -> np.ndarray:
+    """
+    ドキュメント画像を自動で見やすく補正する
+    """
+    # LAB色空間でCLAHE
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    lab = cv2.merge([l, a, b])
+    enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    return enhanced
+
+
+def replace_green_with_white(image: np.ndarray) -> np.ndarray:
+    """
+    画像内の緑色ピクセルを白に置き換える
+    """
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+    # 緑色の範囲（広めに取る）
+    lower_green = np.array([25, 30, 30])
+    upper_green = np.array([95, 255, 255])
+
+    # 緑色マスク
+    green_mask = cv2.inRange(hsv, lower_green, upper_green)
+
+    # マスクを少し膨張させて境界も含める
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    green_mask = cv2.dilate(green_mask, kernel, iterations=2)
+
+    # 緑色部分を白に置き換え
+    result = image.copy()
+    result[green_mask > 0] = [255, 255, 255]
+
+    return result
+
+
+def correct_orientation_by_aruco(image: np.ndarray) -> np.ndarray:
+    """
+    ArUcoマーカーを検出して画像の向きを補正する
+    マーカーの上辺が「上」を向くように回転させる（縦向きの紙に対応）
+    """
+    import cv2.aruco as aruco
+    from config_loader import get_config
+
+    config = get_config()
+
+    # ArUco検出（設定から辞書タイプを取得）
+    dict_type_name = config.get_aruco_dict_type()
+    dict_type = getattr(aruco, dict_type_name, aruco.DICT_4X4_50)
+    aruco_dict = aruco.getPredefinedDictionary(dict_type)
+    params = aruco.DetectorParameters()
+    detector = aruco.ArucoDetector(aruco_dict, params)
+
+    print(f"[Orientation] Using ArUco dictionary: {dict_type_name}")
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    corners, ids, _ = detector.detectMarkers(gray)
+
+    if ids is None or len(ids) == 0:
+        print("[Orientation] No ArUco marker found, keeping original orientation")
+        return image
+
+    # マーカーの角度を計算（上辺のベクトル方向）
+    # angle = 0° → 右向き、90° → 下向き、-90° → 上向き、180° → 左向き
+    angle = calculate_marker_rotation(corners)
+    print(f"[Orientation] Detected marker angle: {angle:.1f}°")
+
+    # マーカーの上辺が「上」を向くように補正（目標角度: -90°）
+    # 現在の角度から -90° にするために必要な回転量を計算
+    # 例: angle=0° → -90°回転が必要、angle=90° → -180°回転が必要
+    #     angle=-90° → 回転不要、angle=180° → +90°回転が必要
+
+    # 最も近い90度の倍数を見つける（-90°を基準として）
+    target_angle = -90  # マーカーの上辺が上を向く角度
+    rotation_needed = target_angle - angle
+
+    # -180° ～ 180° の範囲に正規化
+    while rotation_needed > 180:
+        rotation_needed -= 360
+    while rotation_needed < -180:
+        rotation_needed += 360
+
+    # 最も近い90度の倍数に丸める
+    rotation_options = [-180, -90, 0, 90, 180]
+    rotation_needed = min(rotation_options, key=lambda x: abs(rotation_needed - x))
+
+    if abs(rotation_needed) < 1:
+        print("[Orientation] No rotation needed")
+        return image
+
+    print(f"[Orientation] Applying rotation: {rotation_needed}°")
+
+    # 回転を適用
+    h, w = image.shape[:2]
+    center = (w // 2, h // 2)
+
+    # 90度単位の回転はcv2.rotateを使うと高速で正確
+    if rotation_needed == 90 or rotation_needed == -270:
+        return cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    elif rotation_needed == -90 or rotation_needed == 270:
+        return cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+    elif abs(rotation_needed) == 180:
+        return cv2.rotate(image, cv2.ROTATE_180)
+
+    return image
+
+
+def detect_aruco_rotation(image: np.ndarray) -> int:
+    """
+    ArUcoマーカーを検出して必要な回転量を返す（90度単位）
+
+    Returns:
+        回転量（0, 90, 180, -90）。マーカーが見つからない場合は0
+    """
+    import cv2.aruco as aruco
+    from config_loader import get_config
+
+    config = get_config()
+
+    # ArUco検出（設定から辞書タイプを取得）
+    dict_type_name = config.get_aruco_dict_type()
+    dict_type = getattr(aruco, dict_type_name, aruco.DICT_4X4_50)
+    aruco_dict = aruco.getPredefinedDictionary(dict_type)
+    params = aruco.DetectorParameters()
+    detector = aruco.ArucoDetector(aruco_dict, params)
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    corners, ids, _ = detector.detectMarkers(gray)
+
+    if ids is None or len(ids) == 0:
+        print("[Orientation] No ArUco marker found in original image")
+        return 0
+
+    # マーカーの角度を計算
+    angle = calculate_marker_rotation(corners)
+    print(f"[Orientation] Detected marker angle in original: {angle:.1f}°")
+
+    # マーカーの上辺が「上」を向くように補正（目標角度: -90°）
+    target_angle = -90
+    rotation_needed = target_angle - angle
+
+    # -180° ～ 180° の範囲に正規化
+    while rotation_needed > 180:
+        rotation_needed -= 360
+    while rotation_needed < -180:
+        rotation_needed += 360
+
+    # 最も近い90度の倍数に丸める
+    rotation_options = [-180, -90, 0, 90, 180]
+    rotation_needed = min(rotation_options, key=lambda x: abs(rotation_needed - x))
+
+    # 180と-180は同じ
+    if rotation_needed == 180:
+        rotation_needed = 180
+    elif rotation_needed == -180:
+        rotation_needed = 180
+
+    print(f"[Orientation] Required rotation: {rotation_needed}°")
+    return int(rotation_needed)
+
+
+def apply_rotation(image: np.ndarray, rotation: int) -> np.ndarray:
+    """
+    画像を指定された角度で回転（90度単位）
+    """
+    if rotation == 0:
+        return image
+    elif rotation == 90:
+        return cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    elif rotation == -90:
+        return cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+    elif abs(rotation) == 180:
+        return cv2.rotate(image, cv2.ROTATE_180)
+    return image
+
+
+def ensure_portrait(image: np.ndarray) -> np.ndarray:
+    """
+    画像が横長の場合、90度回転させて縦長にする
+    """
+    h, w = image.shape[:2]
+    if w > h:
+        print(f"[Orientation] Image is landscape ({w}x{h}), rotating to portrait")
+        return cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+    return image
+
+
+def process_with_green_background(image: np.ndarray, enhance: bool = True) -> Tuple[np.ndarray, bool]:
+    """
+    緑背景を使って紙を検出・変換する
+
+    処理順序:
+    1. 緑背景から紙を検出
+    2. A4サイズに透視変換
+    3. 残った緑を白に変換
+    4. ドキュメント補正
+    5. 縦長になるように回転
+
+    Returns:
+        (処理後の画像, 成功したかどうか)
+    """
+    # 紙を検出
+    corners = detect_paper_on_green(image)
+
+    if corners is not None:
+        # A4サイズに変換
+        result = perspective_transform_to_a4(image, corners)
+        if result is not None:
+            # 残った緑を白に変換
+            result = replace_green_with_white(result)
+
+            if enhance:
+                result = auto_enhance_document(result)
+
+            # 最後に必ず縦長にする
+            result = ensure_portrait(result)
+
+            return result, True
+
+    # 検出失敗時は元画像を返す
+    if enhance:
+        return auto_enhance_document(image), False
+    return image, False
 
 
 def auto_white_balance(image, corners):

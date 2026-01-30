@@ -14,19 +14,19 @@ function App() {
       {/* Header / Nav */}
       <header className="h-14 bg-gradient-to-r from-primary to-primary-active flex items-center px-4 justify-between shadow-md z-10">
         <div className="flex items-center space-x-4">
-          <h1 className="text-lg font-bold tracking-wide">📷 Modern GUI</h1>
+          <h1 className="text-lg font-bold tracking-wide">📷 スキャンアプリ</h1>
           <nav className="flex space-x-2 bg-dark-bg bg-opacity-20 rounded p-1">
             <button
               onClick={() => setMode('camera')}
               className={`px-4 py-1 rounded transition text-sm font-medium ${mode === 'camera' ? 'bg-blue-500 text-white shadow' : 'hover:bg-white/10 text-gray-300'}`}
             >
-              Camera
+              カメラ
             </button>
             <button
               onClick={() => setMode('history')}
               className={`px-4 py-1 rounded transition text-sm font-medium ${mode === 'history' ? 'bg-purple-600 text-white shadow' : 'hover:bg-white/10 text-gray-300'}`}
             >
-              History / AI
+              履歴 / AI
             </button>
           </nav>
         </div>
@@ -34,7 +34,7 @@ function App() {
         <button
           onClick={() => setIsSettingsOpen(true)}
           className="p-2 rounded-full hover:bg-white/10 transition"
-          title="Settings"
+          title="設定"
         >
           ⚙️
         </button>
